@@ -1,0 +1,8 @@
+.env
+tests/
+data/
+ingest.py
+qdrant_test.py
+qdrantPayload.py
+__pycache__/
+.vscode/
