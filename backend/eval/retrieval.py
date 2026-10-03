@@ -75,6 +75,29 @@ def http_retriever(base_url: str) -> Retriever:
     return search
 
 
+def v2_retriever(variant: str = "v2") -> Retriever:
+    """The v2 engine in-process. Variants switch components off to measure each one:
+
+        v2          everything available (exact lookup + case names + BM25 [+ dense])
+        v2-bm25     BM25 only (no exact lookup, no case-name matching)
+        v2-exact    exact lookup + case names only
+    """
+    from app.search.engine import SearchEngine, Weights
+
+    weights = Weights()
+    if variant == "v2-bm25":
+        weights.exact = weights.exact_uncertain = weights.case_name = 0.0
+    elif variant == "v2-exact":
+        weights.bm25 = 0.0
+    engine = SearchEngine.from_corpus(weights=weights)
+
+    def search(query: str, k: int) -> list[dict]:
+        return [{"ref": h["_ref"], "score": h["_score"], "chunk_id": h.get("chunk_id")}
+                for h in engine.search(query, k=k)]
+
+    return search
+
+
 # ── Metrics ─────────────────────────────────────────────────────────────
 
 
@@ -233,7 +256,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run")
-    run.add_argument("--target", required=True, help="v1 API base URL, e.g. http://127.0.0.1:8000")
+    run.add_argument("--target", required=True,
+                     help="v1 API base URL (http://127.0.0.1:8000), or v2 / v2-bm25 / v2-exact (in-process)")
     run.add_argument("--name", required=True)
     run.add_argument("--notes", default="")
     show = sub.add_parser("show")
@@ -245,7 +269,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.cmd == "run":
-        print_summary(evaluate(http_retriever(args.target), args.name, args.notes))
+        retriever = (v2_retriever(args.target) if args.target.startswith("v2")
+                     else http_retriever(args.target))
+        print_summary(evaluate(retriever, args.name, args.notes))
     elif args.cmd == "show":
         print_summary(load_result(args.name))
     else:
