@@ -8,10 +8,9 @@ numpy
 qdrant-client
 cohere
 tqdm
+# Imported at startup by app/services/retrieval/fusion.py (FAISS index wrapper)
+faiss-cpu
 
 # Tests
 pytest
 pytest-asyncio
-
-# Legacy FAISS backend (app/infrastructure/faiss) — not used by the current wiring
-# faiss-cpu
