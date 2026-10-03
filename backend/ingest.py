@@ -18,8 +18,8 @@ What it does:
     2. Embeds texts via HuggingFace BGE-M3 API in batches
     3. Uploads vectors + metadata to Qdrant Cloud
 
-Run from the project root:
-    cd ParAILegal
+Run from the backend directory:
+    cd ParAILegal/backend
     python ingest.py
 
 Estimated time (HF free tier, ~32 texts/batch):

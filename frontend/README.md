@@ -1,6 +1,6 @@
 # ParAILegal — Frontend
 
-The frontend for [ParAILegal](https://github.com/sarthak213/ParAILegal), an AI-powered Indian legal research tool. Built with React, TypeScript, and Vite.
+The frontend for [ParAILegal](../README.md), an AI-powered Indian legal research tool. Built with React, TypeScript, and Vite.
 
 ## What it does
 
@@ -19,7 +19,7 @@ ParAILegal lets lawyers, law students, and researchers ask questions about India
 
 ## Stack
 
-- React 18 + TypeScript
+- React 19 + TypeScript
 - Vite
 - Lucide React (icons)
 - CSS custom properties (no UI framework)
@@ -39,15 +39,15 @@ The app runs at `http://localhost:5173` and connects to the FastAPI backend at `
 
 ## Backend
 
-The backend repo is at [github.com/sarthak213/ParAILegal](https://github.com/sarthak213/ParAILegal). It must be running locally for the frontend to work. Start it with:
+The backend lives in [`../backend`](../backend/README.md). It must be running for the frontend to work. Start it from `backend/` with:
 
 ```bash
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 ## Configuration
 
-Create a `.env.local` file in the project root:
+Create a `.env.local` file in `frontend/`:
 
 ```env
 # Local development
@@ -86,4 +86,4 @@ src/
 
 ## License
 
-GNU Affero General Public License v3.0 — see the backend repo for full license terms.
+GNU Affero General Public License v3.0 — see [LICENCE.md](../LICENCE.md).

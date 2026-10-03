@@ -1,6 +1,6 @@
-# ParAILegal
+# ParAILegal — Backend
 
-ParAILegal is an Indian legal research API. It retrieves relevant passages from the Constitution of India, the BNS, BNSS, BSA, and landmark judgments, then uses a language model to produce a grounded answer with source citations.
+The FastAPI backend for [ParAILegal](../README.md). It is an Indian legal research API. It retrieves relevant passages from the Constitution of India, the BNS, BNSS, BSA, and landmark judgments, then uses a language model to produce a grounded answer with source citations.
 
 The project is a FastAPI service backed by Qdrant Cloud. Queries are routed by legal domain, rewritten for retrieval, embedded with Cohere, searched with Qdrant, fused with reciprocal rank fusion, and optionally answered by Sarvam.
 
@@ -37,6 +37,8 @@ At startup, the lifespan handler verifies the cloud APIs and checks each Qdrant-
 
 ## Repository Layout
 
+All paths are relative to `backend/`, and every command below is run from `backend/`.
+
 ```text
 app/
   main.py                         FastAPI application and health endpoints
@@ -56,6 +58,7 @@ ingest.py                          Explicit corpus ingestion utility
 tests/test_suite.py                HTTP and router test suite
 qdrant_test.py                     Qdrant payload-index maintenance utility
 qdrantPayload.py                   Qdrant source-type count utility
+requirements.txt                   Python dependencies
 ```
 
 The active vector backend is Qdrant. The `app/infrastructure/faiss/` module is retained as legacy code and is not used by the current RAG wiring.
@@ -67,18 +70,19 @@ The active vector backend is Qdrant. The `app/infrastructure/faiss/` module is r
 - API keys for Sarvam, Groq, and Cohere
 - The JSONL corpus files listed below
 
-No dependency manifest is currently committed, so install the runtime and test dependencies directly in a virtual environment:
+Install the runtime and test dependencies in a virtual environment:
 
 ```powershell
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install fastapi uvicorn pydantic-settings httpx numpy qdrant-client cohere tqdm pytest pytest-asyncio
+python -m pip install -r requirements.txt
 ```
 
 ## Configuration
 
-Create a `.env` file in the project root. It is intentionally ignored by Git.
+Create a `.env` file in `backend/`. It is intentionally ignored by Git.
 
 ```dotenv
 SARVAM_API_KEY=your-sarvam-api-key
@@ -111,7 +115,7 @@ Optional retrieval and retry settings have defaults in `app/core/config.py`:
 
 ## Corpus Data
 
-Place these files under `data/`:
+Place these files under `backend/data/`:
 
 ```text
 data/constitution_final.jsonl
@@ -148,7 +152,7 @@ python qdrant_test.py      # Recreate the source_type payload index and count va
 
 ## Running the API
 
-From the project root, start the development server:
+From `backend/`, start the development server:
 
 ```powershell
 python -m uvicorn app.main:app --reload
