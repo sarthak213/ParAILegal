@@ -1,0 +1,17 @@
+# Runtime
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+numpy
+qdrant-client
+cohere
+tqdm
+
+# Tests
+pytest
+pytest-asyncio
+
+# Legacy FAISS backend (app/infrastructure/faiss) — not used by the current wiring
+# faiss-cpu

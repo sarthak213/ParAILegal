@@ -1,8 +1,20 @@
+# Secrets
 .env
-tests/
-data/
-ingest.py
-qdrant_test.py
-qdrantPayload.py
-__pycache__/
+.env.local
+.env.*.local
+
+# Editor
 .vscode/
+
+# ── Backend (Python) ──────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+backend/data/
+
+# ── Frontend (Node / Vite) ────────────────────
+node_modules/
+dist/
+*.log
