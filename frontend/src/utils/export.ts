@@ -36,7 +36,7 @@ export async function copyCitation(source: SourceChunk): Promise<boolean> {
  */
 export function exportToPDF(
   query: string,
-  answer: string,
+  answerHtml: string,  // the rendered answer (React-escaped markdown output), not raw text
   sources: SourceChunk[],
   domain: string,
 ): void {
@@ -115,7 +115,13 @@ export function exportToPDF(
       padding-bottom: 6pt;
       margin-bottom: 14pt;
     }
-    .answer-text { white-space: pre-wrap; }
+    .answer-text h3 { font-size: 13pt; margin: 14pt 0 6pt; }
+    .answer-text p { margin: 0 0 8pt; }
+    .answer-text ul, .answer-text ol { margin: 0 0 8pt 18pt; }
+    .answer-text blockquote { border-left: 3pt solid #ccc; padding-left: 10pt; color: #444; margin: 0 0 8pt; }
+    .answer-text .citation-chip { border: none; background: none; font: inherit; font-size: 10pt; color: #8b1c2b; padding: 0; }
+    .answer-text .citation-chip::before { content: "["; } .answer-text .citation-chip::after { content: "]"; }
+    .answer-text .citation-chip--unverified { color: #b06000; }
     .sources-section {}
     .source-item {
       margin-bottom: 14pt;
@@ -156,7 +162,7 @@ export function exportToPDF(
 
   <div class="answer-section">
     <div class="section-title">Answer</div>
-    <div class="answer-text">${escHtml(answer.replace(/\[([^\]]+)\]/g, '[$1]'))}</div>
+    <div class="answer-text">${answerHtml}</div>
   </div>
 
   ${sources.length > 0 ? `

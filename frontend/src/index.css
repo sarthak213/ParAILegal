@@ -423,37 +423,108 @@ body {
 
 .answer-view__body {
   font-family: var(--font-serif);
-  font-size: 1.05rem;
-  line-height: 1.85;
+  font-size: 1.08rem;
+  line-height: 1.8;
   color: var(--ink-1);
-  white-space: pre-wrap;
 }
 
-.citation-tag {
+/* ── Markdown answer ── */
+.answer-md > :first-child { margin-top: 0; }
+.answer-md p { margin: 0 0 0.85em; }
+.answer-md h3 {
+  font-family: var(--font-serif);
+  font-size: 1.22rem;
+  font-weight: 600;
+  color: var(--ink-0);
+  margin: 1.4em 0 0.5em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+}
+.answer-md h3::before {
+  content: "";
+  width: 3px;
+  height: 0.85em;
+  background: var(--crimson);
+  border-radius: 2px;
+  flex: none;
+  align-self: center;
+}
+.answer-md h4 { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.35em; color: var(--ink-0); }
+/* Bold = offences, punishments, time limits, legal tests: the parts a reader scans for */
+.answer-md strong {
+  font-weight: 650;
+  color: var(--ink-0);
+  background: linear-gradient(transparent 62%, var(--gold-dim) 62%);
+  padding: 0 1px;
+}
+/* Italics = case names, by legal convention */
+.answer-md em { font-style: italic; color: var(--crimson); }
+.answer-md ul, .answer-md ol { margin: 0 0 0.9em 1.3em; padding: 0; }
+.answer-md li { margin: 0.25em 0; padding-left: 0.2em; }
+.answer-md li::marker { color: var(--gold); }
+.answer-md blockquote {
+  margin: 0 0 0.9em;
+  padding: 0.55em 0.95em;
+  border-left: 3px solid var(--gold);
+  background: var(--paper-1);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--ink-2);
+}
+.answer-md blockquote p:last-child { margin-bottom: 0; }
+.answer-md code { font-family: var(--font-mono); font-size: 0.85em; background: var(--paper-1); padding: 0 4px; border-radius: 3px; }
+.answer-md table { border-collapse: collapse; margin: 0 0 1em; font-family: var(--font-sans); font-size: 0.88rem; }
+.answer-md th, .answer-md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top; }
+.answer-md th { background: var(--paper-1); font-weight: 600; }
+.answer-md hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
+.answer-md a:not(.citation-chip) { color: var(--teal); }
+
+/* ── Citation chips ── */
+.citation-group { white-space: nowrap; }
+.citation-group + .citation-group { margin-left: 3px; }
+.citation-chip {
   display: inline-block;
+  margin: 0 2px;
   background: var(--crimson-dim);
   color: var(--crimson);
   border: 1px solid var(--crimson-mid);
-  border-radius: 3px;
-  padding: 0 5px;
-  font-size: 0.78em;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.74em;
   font-family: var(--font-mono);
+  line-height: 1.65;
+  vertical-align: 0.08em;
   cursor: pointer;
-  transition: background 0.12s;
-  vertical-align: baseline;
-  line-height: 1.6;
+  transition: background 0.12s, border-color 0.12s;
 }
-.citation-tag:hover { background: var(--crimson-mid); }
+.citation-chip:hover { background: var(--crimson-mid); }
+.citation-chip:focus-visible { outline: 2px solid var(--crimson); outline-offset: 1px; }
+/* Cited, but not among the retrieved sources */
+.citation-chip--unverified {
+  background: #c9850018;
+  color: #9a6400;
+  border: 1px dashed #c98500;
+  cursor: help;
+}
+.citation-chip--unverified:hover { background: #c9850030; }
 
-.streaming-cursor {
+/* ── Streaming cursor: follows the last block of the markdown as it grows ── */
+.answer-md--streaming > :last-child::after,
+.answer-md--streaming > ul:last-child > li:last-child::after,
+.answer-md--streaming > ol:last-child > li:last-child::after {
+  content: "";
   display: inline-block;
   width: 2px;
   height: 1.1em;
+  margin-left: 2px;
   background: var(--gold);
-  margin-left: 1px;
   vertical-align: text-bottom;
   animation: blink 0.85s step-end infinite;
 }
+.answer-md--streaming > ul:last-child::after,
+.answer-md--streaming > ol:last-child::after { content: none; }
 @keyframes blink { 50% { opacity: 0; } }
 
 .answer-view__disclaimer {

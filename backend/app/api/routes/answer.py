@@ -250,6 +250,8 @@ async def _stream_answer(
     user_message      = rag.answerer._build_user_message(clean_query, mode, context)
 
     assembled_tokens = []
+    thinking_announced = False   # reasoning models stream hidden reasoning before the answer
+    finish_reason = None
 
     try:
         async with httpx.AsyncClient(
@@ -269,7 +271,9 @@ async def _stream_answer(
                         {"role": "user",   "content": user_message},
                     ],
                     "temperature": rag.settings.TEMPERATURE_ANSWER,
-                    "max_tokens":  4096,
+                    # Reasoning models spend part of this on hidden reasoning before
+                    # the answer; 4096 was too few for a five-source context.
+                    "max_tokens":  8192,
                     "stream":      True,
                 },
             ) as response:
@@ -319,7 +323,17 @@ async def _stream_answer(
                         # chunk before [DONE] — skip it silently
                         continue
 
-                    delta = choices[0].get("delta", {}).get("content")
+                    choice = choices[0]
+                    finish_reason = choice.get("finish_reason") or finish_reason
+                    delta_obj = choice.get("delta", {})
+
+                    # Sarvam-105b streams `reasoning_content` (often for 15-30 s) before any
+                    # `content`. Tell the UI once, so it can say what is happening.
+                    if delta_obj.get("reasoning_content") and not thinking_announced:
+                        thinking_announced = True
+                        yield _sse({"type": "status", "stage": "thinking"})
+
+                    delta = delta_obj.get("content")
                     if delta:
                         assembled_tokens.append(delta)
                         yield _sse({"type": "token", "token": delta})
@@ -341,6 +355,18 @@ async def _stream_answer(
 
     # ── Step 3: Done — send full assembled answer ─────────────────────
     full_answer = "".join(assembled_tokens)
+
+    if not full_answer.strip():
+        # Never present an empty answer as a success (v1 showed only the disclaimer).
+        reason = (
+            "it ran out of its token budget while reasoning"
+            if finish_reason == "length" else f"finish reason: {finish_reason or 'unknown'}"
+        )
+        yield _sse({
+            "type":   "error",
+            "detail": f"The language model returned no answer ({reason}). Please try again.",
+        })
+        return
 
     disclaimer = (
         "⚖ This is a research tool. Verify all provisions against "

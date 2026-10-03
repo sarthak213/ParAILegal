@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Copy, ChevronDown, ChevronUp, Check } from 'lucide-react'
 import type { SourceChunk } from '../../types'
 import { getSourceMeta, formatLegalCitation } from '../../utils/citations'
@@ -14,8 +14,14 @@ interface Props {
 export function SourceCard({ source, highlighted, onClick }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
 
-  const { label, colorClass } = getSourceMeta(source.source_type)
+  // A citation chip in the answer was clicked: bring this card into view.
+  useEffect(() => {
+    if (highlighted) cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [highlighted])
+
+  const { label, colorClass } = getSourceMeta(source.source_type, source)
   const citation = formatLegalCitation(source)
   const score = source.score?.toFixed(4) ?? source.rrf_score?.toFixed(5) ?? '—'
 
@@ -35,6 +41,7 @@ export function SourceCard({ source, highlighted, onClick }: Props) {
 
   return (
     <div
+      ref={cardRef}
       className={`source-card${highlighted ? ' source-card--highlighted' : ''}`}
       onClick={onClick}
     >

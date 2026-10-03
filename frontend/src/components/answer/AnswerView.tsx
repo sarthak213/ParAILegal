@@ -1,7 +1,10 @@
-import { useState } from 'react'
+import { memo, useMemo, useRef, useState } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Copy, FileText, Share2, Check } from 'lucide-react'
 import type { SourceChunk, QueryMode, AppState } from '../../types'
-import { parseAnswerCitations } from '../../utils/citations'
+import type { StreamStage } from '../../hooks/useStream'
+import { linkCitations, matchSource, parseCitation } from '../../utils/citations'
 import { copyToClipboard, exportToPDF } from '../../utils/export'
 
 interface Props {
@@ -11,8 +14,73 @@ interface Props {
   domain: string
   mode: QueryMode
   appState: AppState
+  stage: StreamStage
   error: string
-  onCitationClick: (citation: string) => void
+  onCitationClick: (sourceIndex: number) => void
+}
+
+/**
+ * One citation chip. A citation that matches a retrieved source links to it; one that matches
+ * nothing is flagged, because the model cited something it was not given.
+ */
+function CitationChip({ label, sources, onClick }: {
+  label: string
+  sources: SourceChunk[]
+  onClick: (sourceIndex: number) => void
+}) {
+  const parsed = parseCitation(label)
+  const index = matchSource(parsed, sources)
+  const verified = index >= 0
+  return (
+    <button
+      type="button"
+      className={`citation-chip${verified ? '' : ' citation-chip--unverified'}`}
+      title={verified ? 'Show this source' : 'Not among the retrieved sources: verify this citation independently'}
+      onClick={() => verified && onClick(index)}
+    >
+      {label}
+    </button>
+  )
+}
+
+const AnswerMarkdown = memo(function AnswerMarkdown({ markdown, sources, onCitationClick }: {
+  markdown: string
+  sources: SourceChunk[]
+  onCitationClick: (sourceIndex: number) => void
+}) {
+  const components = useMemo<Components>(() => ({
+    a({ href, children, ...props }) {
+      if (href === '#cite') {
+        const label = String(Array.isArray(children) ? children.join('') : children ?? '')
+        // "[Section 103, BNS; Section 101, BNS]" becomes one chip per citation
+        const parts = label.split(';').map(p => p.trim()).filter(Boolean)
+        return (
+          <span className="citation-group">
+            {parts.map((part, i) => (
+              <CitationChip key={i} label={part} sources={sources} onClick={onCitationClick} />
+            ))}
+          </span>
+        )
+      }
+      return <a href={href} target="_blank" rel="noreferrer noopener" {...props}>{children}</a>
+    },
+    // The query is the page's h1; demote any heading the model emits so the hierarchy stays sane.
+    h1: ({ children }) => <h3>{children}</h3>,
+    h2: ({ children }) => <h3>{children}</h3>,
+  }), [sources, onCitationClick])
+
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      {linkCitations(markdown)}
+    </ReactMarkdown>
+  )
+})
+
+const STAGE_LABEL: Record<StreamStage, string> = {
+  searching: 'Searching the legal corpus…',
+  reading: 'Reading the retrieved provisions…',
+  thinking: 'Reasoning over the provisions…',
+  writing: 'Writing the answer…',
 }
 
 export function AnswerView({
@@ -22,11 +90,13 @@ export function AnswerView({
   domain,
   mode,
   appState,
+  stage,
   error,
   onCitationClick,
 }: Props) {
   const [copied, setCopied] = useState(false)
   const [shared, setShared] = useState(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   const isStreaming = appState === 'streaming'
   const isDone      = appState === 'done'
@@ -41,7 +111,8 @@ export function AnswerView({
   }
 
   function handleExportPDF() {
-    exportToPDF(query, answer, sources, domain)
+    // The rendered answer (headings, lists, citations) rather than raw markdown
+    exportToPDF(query, bodyRef.current?.innerHTML ?? '', sources, domain)
   }
 
   async function handleShare() {
@@ -50,8 +121,6 @@ export function AnswerView({
     setShared(true)
     setTimeout(() => setShared(false), 2000)
   }
-
-  const segments = parseAnswerCitations(answer)
 
   return (
     <div className="answer-view">
@@ -77,7 +146,7 @@ export function AnswerView({
         <div className="answer-searching">
           <div className="answer-searching__label">
             <span className="answer-searching__dot" />
-            Searching legal corpus…
+            {STAGE_LABEL[stage]}
           </div>
           <div className="answer-searching__skeletons">
             {[100, 88, 94, 72, 90, 60].map((w, i) => (
@@ -95,24 +164,13 @@ export function AnswerView({
         </div>
       )}
 
-      {/* Answer body */}
+      {/* Answer body: markdown, rendered as it streams */}
       {answer && (
-        <div className="answer-view__body">
-          {segments.map((seg, i) =>
-            seg.isCitation ? (
-              <span
-                key={i}
-                className="citation-tag"
-                title={seg.citation}
-                onClick={() => seg.citation && onCitationClick(seg.citation)}
-              >
-                {seg.text}
-              </span>
-            ) : (
-              <span key={i}>{seg.text}</span>
-            )
-          )}
-          {isStreaming && <span className="streaming-cursor" />}
+        <div
+          ref={bodyRef}
+          className={`answer-view__body answer-md${isStreaming ? ' answer-md--streaming' : ''}`}
+        >
+          <AnswerMarkdown markdown={answer} sources={sources} onCitationClick={onCitationClick} />
         </div>
       )}
 

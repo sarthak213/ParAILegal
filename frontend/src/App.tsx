@@ -38,7 +38,7 @@ export default function App() {
 
   // ── Hooks ─────────────────────────────────────────────────────────
   const { entries, addEntry, removeEntry, clearAll } = useHistory()
-  const { appState, answer, sources, domain: streamDomain,
+  const { appState, stage, answer, sources, domain: streamDomain,
           error, stream, cancel, reset } = useStream()
   const backendStatus = useBackend()
 
@@ -113,18 +113,11 @@ export default function App() {
   }, [reset])
 
   // ── Citation click → highlight source ────────────────────────────
-  const handleCitationClick = useCallback((citation: string) => {
-    const sources = liveMode ? shownSources : displaySources
-    const idx = sources.findIndex(s =>
-      (s.citation ?? '').toLowerCase().includes(citation.toLowerCase()) ||
-      (s.hierarchy ?? '').toLowerCase().includes(citation.toLowerCase()) ||
-      (s.section ?? '').toLowerCase().includes(citation.toLowerCase())
-    )
-    if (idx >= 0) {
-      setHighlightedSource(idx)
-      setSourcesCollapsed(false)
-    }
-  }, [liveMode, shownSources, displaySources])
+  // The chip has already matched the citation to a source by act and section number.
+  const handleCitationClick = useCallback((sourceIndex: number) => {
+    setHighlightedSource(sourceIndex)
+    setSourcesCollapsed(false)
+  }, [])
 
   return (
     <div className="app">
@@ -177,6 +170,7 @@ export default function App() {
                 domain={shownDomain}
                 mode={shownMode}
                 appState={shownState}
+                stage={stage}
                 error={shownError}
                 onCitationClick={handleCitationClick}
               />

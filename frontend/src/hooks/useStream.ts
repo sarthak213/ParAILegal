@@ -3,22 +3,22 @@ import type { SourceChunk, AppState, QueryMode } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
+/** What the pipeline is doing before the first answer token arrives. */
+export type StreamStage = 'searching' | 'reading' | 'thinking' | 'writing'
+
 interface StreamState {
   appState: AppState
+  stage: StreamStage
   answer: string
   sources: SourceChunk[]
   domain: string
   error: string
 }
 
+const INITIAL: StreamState = { appState: 'idle', stage: 'searching', answer: '', sources: [], domain: '', error: '' }
+
 export function useStream() {
-  const [state, setState] = useState<StreamState>({
-    appState: 'idle',
-    answer: '',
-    sources: [],
-    domain: '',
-    error: '',
-  })
+  const [state, setState] = useState<StreamState>(INITIAL)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -37,7 +37,7 @@ export function useStream() {
     if (mode === 'ADVOCATE') query = `ADVOCATE: ${rawQuery}`
     if (mode === 'SUMMARISE') query = `SUMMARISE: ${rawQuery}`
 
-    setState({ appState: 'streaming', answer: '', sources: [], domain: '', error: '' })
+    setState({ ...INITIAL, appState: 'streaming' })
 
     let assembledTokens = ''
     let finalSources: SourceChunk[] = []
@@ -78,12 +78,15 @@ export function useStream() {
           if (event.type === 'sources') {
             finalSources = (event.sources as SourceChunk[]) ?? []
             finalDomain = (event.domain as string) ?? ''
-            setState(s => ({ ...s, sources: finalSources, domain: finalDomain }))
+            setState(s => ({ ...s, stage: 'reading', sources: finalSources, domain: finalDomain }))
+          } else if (event.type === 'status') {
+            // A reasoning model is thinking before it writes (can take 15-30 s)
+            if (event.stage === 'thinking') setState(s => ({ ...s, stage: 'thinking' }))
           } else if (event.type === 'token') {
             assembledTokens += (event.token as string) ?? ''
             // Strip disclaimer for streaming display
             const display = assembledTokens.replace(/\n\n⚖.*$/s, '')
-            setState(s => ({ ...s, answer: display }))
+            setState(s => ({ ...s, stage: 'writing', answer: display }))
           } else if (event.type === 'done') {
             const full = (event.answer as string) ?? assembledTokens
             const display = full.replace(/\n\n⚖.*$/s, '').replace(/⚖.*$/s, '').trimEnd()
@@ -95,6 +98,8 @@ export function useStream() {
           }
         }
       }
+      // The stream ended without a "done" event: the server restarted or the network dropped.
+      throw new Error('The connection to the server closed before the answer finished. Please try again.')
     } catch (err) {
       if ((err as Error).name === 'AbortError') return
       const msg = (err as Error).message ?? 'Connection failed'
@@ -109,7 +114,7 @@ export function useStream() {
 
   const reset = useCallback(() => {
     abortRef.current?.abort()
-    setState({ appState: 'idle', answer: '', sources: [], domain: '', error: '' })
+    setState(INITIAL)
   }, [])
 
   return { ...state, stream, cancel, reset }
