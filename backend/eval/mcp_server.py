@@ -11,14 +11,14 @@ from __future__ import annotations
 import os
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from app.infrastructure.llm.answerer import _build_context
 
 SEARCH_URL = os.environ.get("PARAILEGAL_SEARCH_URL", "http://127.0.0.1:8000")
 TOP_K = int(os.environ.get("PARAILEGAL_TOP_K", "5"))
 
-mcp = FastMCP("parailegal")
+mcp = MCPServer("parailegal", log_level="WARNING")
 
 
 @mcp.tool()
