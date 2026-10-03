@@ -60,6 +60,12 @@ class ParsedQuery:
     keywords: list[str] = field(default_factory=list)
     expansions: list[str] = field(default_factory=list)
     corrections: dict[str, str] = field(default_factory=dict)
+    corrected: str = ""  # the text with typos fixed
+
+    @property
+    def english(self) -> str:
+        """Corrected text plus glossary translations: what an English-only model should read."""
+        return " ".join([self.corrected or self.text, *self.expansions]).strip()
 
 
 # ── Normalisation ──────────────────────────────────────────────────────
@@ -199,4 +205,4 @@ class QueryParser:
                     and tok.isascii()):
                 keywords.append(tok)
         return ParsedQuery(raw=raw, text=text, mode=mode, citations=citations, keywords=keywords,
-                           expansions=expansions, corrections=corrections)
+                           expansions=expansions, corrections=corrections, corrected=corrected)

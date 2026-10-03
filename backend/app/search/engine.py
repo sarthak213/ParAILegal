@@ -29,13 +29,27 @@ DenseSearch = Callable[[str, int], list[tuple[int, float]]]
 
 @dataclass
 class Weights:
-    exact: float = 4.0          # a provision named in the query
-    exact_uncertain: float = 2.0  # e.g. "dhara 302" read as IPC 302
-    case_name: float = 3.0
-    bm25: float = 1.0
-    dense: float = 1.0
-    domain_boost: float = 0.15  # soft prior for the routed domain
+    # Tuned on the dev split with eval/tune.py (the same optimum for every embedder tried).
+    exact: float = 2.0            # a provision named in the query
+    exact_uncertain: float = 1.0  # e.g. "dhara 302" read as IPC 302
+    case_name: float = 1.5
+    bm25: float = 0.5
+    dense: float = 0.5
+    domain_boost: float = 0.0     # soft prior for the routed domain (tuning switched it off)
+    rerank_top: int = 20          # candidates the cross-encoder re-orders, when one is set
     fields: FieldWeights = field(default_factory=FieldWeights)
+
+
+@dataclass
+class Components:
+    """Ranked chunk indices from each retriever for one query."""
+
+    exact: list[int]
+    uncertain: list[int]
+    cases: list[int]
+    bm25: list[int]
+    dense: list[int]
+    routed: str
 
 
 ACT_TITLES = {"BNS": "bharatiya nyaya sanhita", "BNSS": "bharatiya nagarik suraksha sanhita",
@@ -67,9 +81,10 @@ def _old_aliases() -> dict[str, list[str]]:
 
 class SearchEngine:
     def __init__(self, chunks: list[dict], dense: DenseSearch | None = None,
-                 router: Any = None, weights: Weights | None = None) -> None:
+                 router: Any = None, weights: Weights | None = None, reranker: Any = None) -> None:
         self.chunks = chunks
         self.dense = dense
+        self.reranker = reranker
         self.router = router
         self.weights = weights or Weights()
         self.by_ref: dict[str, list[int]] = defaultdict(list)
@@ -122,58 +137,66 @@ class SearchEngine:
     def parse(self, query: str) -> ParsedQuery:
         return self.parser.parse(query)
 
-    def search(self, query: str, k: int = 10, domain: str | None = None) -> list[dict]:
+    def components(self, query: str, domain: str | None = None) -> Components:
+        """Each retriever's ranked list for a query: the expensive part, independent of weights."""
         pq = self.parser.parse(query)
-        w = self.weights
-        ranked_lists: list[tuple[float, list[int]]] = []
-
         exact: list[int] = []
         uncertain: list[int] = []
         for c in pq.citations:
             (exact if c.certain else uncertain).extend(self.by_ref.get(c.ref, []))
-        if exact:
-            ranked_lists.append((w.exact, exact))
-        if uncertain:
-            ranked_lists.append((w.exact_uncertain, uncertain))
-
         low = pq.text.lower()
-        cases = [ref for key, ref in self.case_keys if fuzz.partial_ratio(key, low) >= 88]
-        if cases:
-            ranked_lists.append((w.case_name, [i for ref in dict.fromkeys(cases) for i in self.by_ref[ref]]))
-
-        bm = self.bm25.search(pq.keywords, limit=60, weights=w.fields)
-        if bm:
-            ranked_lists.append((w.bm25, [i for i, _ in bm]))
-
-        if self.dense is not None:
-            dn = self.dense(pq.text, 60)
-            if dn:
-                ranked_lists.append((w.dense, [i for i, _ in dn]))
-
-        scores: dict[int, float] = defaultdict(float)
-        for weight, idxs in ranked_lists:
-            for rank, i in enumerate(idxs, start=1):
-                scores[i] += weight / (RRF_K + rank)
-
+        case_refs = dict.fromkeys(ref for key, ref in self.case_keys if fuzz.partial_ratio(key, low) >= 88)
+        cases = [i for ref in case_refs for i in self.by_ref[ref]]
+        bm = [i for i, _ in self.bm25.search(pq.keywords, limit=60, weights=self.weights.fields)]
+        dn = [i for i, _ in self.dense(pq.text, 60)] if self.dense is not None else []
         routed = domain or (self.router.route(pq.text) if self.router else "all")
-        if routed and routed != "all" and w.domain_boost:
-            for i in scores:
-                if self.chunks[i]["_domain"] == routed:
-                    scores[i] *= 1 + w.domain_boost
+        return Components(exact, uncertain, cases, bm, dn, routed)
 
-        best = sorted(scores, key=lambda i: -scores[i])[:k]
+    def fuse(self, comp: Components, weights: Weights, k: int = 10) -> list[tuple[int, float]]:
+        """Weighted reciprocal-rank fusion of the component lists, plus the soft domain boost."""
+        scores: dict[int, float] = defaultdict(float)
+        for weight, idxs in ((weights.exact, comp.exact), (weights.exact_uncertain, comp.uncertain),
+                             (weights.case_name, comp.cases), (weights.bm25, comp.bm25),
+                             (weights.dense, comp.dense)):
+            if weight:
+                for rank, i in enumerate(idxs, start=1):
+                    scores[i] += weight / (RRF_K + rank)
+        if comp.routed and comp.routed != "all" and weights.domain_boost:
+            for i in scores:
+                if self.chunks[i]["_domain"] == comp.routed:
+                    scores[i] *= 1 + weights.domain_boost
+        return sorted(scores.items(), key=lambda kv: -kv[1])[:k]
+
+    def rerank(self, query: str, comp: Components, fused: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
+        """Re-order fused candidates with the cross-encoder. Provisions the user named stay first."""
+        pinned = [(i, s) for i, s in fused if i in set(comp.exact)]
+        rest = [(i, s) for i, s in fused if i not in set(comp.exact)]
+        if rest and self.reranker is not None:
+            scores = self.reranker(query, [self.chunks[i]["_embed_text"] for i, _ in rest])
+            rest = sorted(((i, sc) for (i, _), sc in zip(rest, scores, strict=True)), key=lambda kv: -kv[1])
+        return (pinned + rest)[:k]
+
+    def search(self, query: str, k: int = 10, domain: str | None = None) -> list[dict]:
+        comp = self.components(query, domain)
+        if self.reranker is not None:
+            pool = self.fuse(comp, self.weights, max(k, self.weights.rerank_top))
+            # the reranker is English-only: give it typo-corrected text plus glossary translations
+            ranked = self.rerank(self.parser.parse(query).english, comp, pool, k)
+        else:
+            ranked = self.fuse(comp, self.weights, k)
         out = []
-        for rank, i in enumerate(best, start=1):
+        for rank, (i, score) in enumerate(ranked, start=1):
             hit = {key: v for key, v in self.chunks[i].items() if not key.startswith("_")}
-            hit.update(_score=round(scores[i], 6), _rank=rank, _ref=ref_of(self.chunks[i]))
+            hit.update(_score=round(score, 6), _rank=rank, _ref=ref_of(self.chunks[i]))
             out.append(hit)
         return out
 
     # ── Construction ───────────────────────────────────────────────────
 
     @classmethod
-    def from_corpus(cls, settings: Any = None, dense: DenseSearch | None = None,
-                    weights: Weights | None = None) -> SearchEngine:
+    def from_corpus(cls, settings: Any = None, dense: DenseSearch | str | None = None,
+                    weights: Weights | None = None, rerank: str | None = None) -> SearchEngine:
+        """dense: a DenseSearch callable, or an embedder key from app.search.dense.SPECS."""
         from app.core.config import settings as default_settings
         from app.infrastructure.loaders.dataset_loader import (
             ConstitutionLoader,
@@ -186,12 +209,22 @@ class SearchEngine:
         chunks: list[dict] = []
         for loader, domain in ((ConstitutionLoader, "constitution"), (StatuteLoader, "statutes"),
                                (JudgementLoader, "judgements")):
-            _, metadata = loader(settings).load_dataset()
-            for m in metadata:
+            texts, metadata = loader(settings).load_dataset()
+            for text, m in zip(texts, metadata, strict=True):
                 c = dict(m)
+                c["_embed_text"] = text  # citation + body, as v1 embedded it
                 c["_domain"] = domain
                 c["source_type"] = domain
                 if domain == "statutes":
                     c["_act"] = (c.get("chunk_id") or "").split("_")[0].upper()
                 chunks.append(c)
-        return cls(chunks, dense=dense, router=QueryRouter(settings), weights=weights)
+        if isinstance(dense, str):
+            from app.search.dense import DenseIndex
+
+            dense = DenseIndex(dense, [c["_embed_text"] for c in chunks])
+        reranker = None
+        if rerank:
+            from app.search.rerank import Reranker
+
+            reranker = Reranker(rerank)
+        return cls(chunks, dense=dense, router=QueryRouter(settings), weights=weights, reranker=reranker)

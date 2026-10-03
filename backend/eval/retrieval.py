@@ -75,12 +75,15 @@ def http_retriever(base_url: str) -> Retriever:
     return search
 
 
-def v2_retriever(variant: str = "v2") -> Retriever:
+def v2_retriever(variant: str = "v2", dense: str | None = None, rerank: str | None = None) -> Retriever:
     """The v2 engine in-process. Variants switch components off to measure each one:
 
         v2          everything available (exact lookup + case names + BM25 [+ dense])
         v2-bm25     BM25 only (no exact lookup, no case-name matching)
         v2-exact    exact lookup + case names only
+        v2-dense    the dense retriever only (needs --dense)
+
+    dense: an embedder key from app.search.dense.SPECS, e.g. bge-small
     """
     from app.search.engine import SearchEngine, Weights
 
@@ -89,7 +92,9 @@ def v2_retriever(variant: str = "v2") -> Retriever:
         weights.exact = weights.exact_uncertain = weights.case_name = 0.0
     elif variant == "v2-exact":
         weights.bm25 = 0.0
-    engine = SearchEngine.from_corpus(weights=weights)
+    elif variant == "v2-dense":
+        weights.exact = weights.exact_uncertain = weights.case_name = weights.bm25 = 0.0
+    engine = SearchEngine.from_corpus(weights=weights, dense=dense, rerank=rerank)
 
     def search(query: str, k: int) -> list[dict]:
         return [{"ref": h["_ref"], "score": h["_score"], "chunk_id": h.get("chunk_id")}
@@ -260,6 +265,8 @@ def main() -> None:
                      help="v1 API base URL (http://127.0.0.1:8000), or v2 / v2-bm25 / v2-exact (in-process)")
     run.add_argument("--name", required=True)
     run.add_argument("--notes", default="")
+    run.add_argument("--dense", default=None, help="embedder key for v2 targets, e.g. bge-small")
+    run.add_argument("--rerank", default=None, help="reranker key for v2 targets, e.g. minilm-l6")
     show = sub.add_parser("show")
     show.add_argument("name")
     cmp_ = sub.add_parser("compare")
@@ -269,7 +276,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.cmd == "run":
-        retriever = (v2_retriever(args.target) if args.target.startswith("v2")
+        retriever = (v2_retriever(args.target, args.dense, args.rerank) if args.target.startswith("v2")
                      else http_retriever(args.target))
         print_summary(evaluate(retriever, args.name, args.notes))
     elif args.cmd == "show":
