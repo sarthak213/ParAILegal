@@ -35,3 +35,17 @@ Cloud pipeline: Groq rewrite, Cohere embeddings, Qdrant, RRF, hard domain routin
 
 Latency: p50 2.2 s, p95 4.0 s per search. Typical failure: citations are treated as fuzzy text
 (`Section 103 of the BNS` → BNSS 103, `Section 302 IPC` → BNS 30).
+
+## Answer models (`eval/tooleval_pack.py` → ToolEval)
+
+```powershell
+python -m eval.tooleval_pack     # writes eval/tooleval-pack/, then add that folder in ToolEval
+```
+
+- `test.jsonl` (trajectory): 39 conversations, each with a question, a `search_law` call, the
+  **correct provisions** as the tool result, and a reference answer whose **bold** key facts are
+  copied verbatim from those provisions. Retrieval is held constant, so only the model varies.
+  4 of them are off-corpus questions where the right answer is to abstain.
+- `questions.jsonl` (end to end): the same questions through a real tool loop against
+  `eval/mcp_server.py` (`search_law` over the retriever), graded by `must_include`.
+- Profiles: `compact` (a short prompt written for small models) and `full` (v1's prompt).

@@ -14,3 +14,6 @@ faiss-cpu
 # Tests
 pytest
 pytest-asyncio
+
+# Evaluation (eval/mcp_server.py, for ToolEval end-to-end runs)
+mcp
