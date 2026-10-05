@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+.claude/
 
 # Editor
 .vscode/
@@ -13,8 +14,14 @@ __pycache__/
 venv/
 .pytest_cache/
 backend/data/
+backend/models/
 
 # ── Frontend (Node / Vite) ────────────────────
 node_modules/
 dist/
 *.log
+
+# Generated evaluation output (rebuild with the scripts in backend/eval/)
+backend/eval/results/
+backend/eval/questions.jsonl
+backend/eval/tooleval-pack/

@@ -10,7 +10,13 @@ cohere
 tqdm
 # Imported at startup by app/services/retrieval/fusion.py (FAISS index wrapper)
 faiss-cpu
+# v2 search (app/search): typo tolerance, local embeddings via ONNX
+rapidfuzz
+fastembed
 
 # Tests
 pytest
 pytest-asyncio
+
+# Evaluation (eval/mcp_server.py, for ToolEval end-to-end runs)
+mcp>=2

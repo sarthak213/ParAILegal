@@ -34,6 +34,7 @@ export interface AnswerResponse {
 export type SSEEvent =
   | { type: 'sources'; domain: string; sources: SourceChunk[] }
   | { type: 'token'; token: string }
+  | { type: 'status'; stage: 'thinking' }
   | { type: 'done'; answer: string }
   | { type: 'error'; detail: string }
 
