@@ -54,9 +54,6 @@ class LocalAnswerer:
         if tail:
             yield tail
 
-    async def generate(self, p: Prepared) -> str:
-        return finish("".join([t async for t in self.stream(p)]))
-
     async def aclose(self) -> None:
         self.server.stop()
 

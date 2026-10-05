@@ -14,8 +14,9 @@ from collections import Counter
 from typing import Any
 
 from app.answer.gate import SOURCES_ONLY
-from app.answer.local import LocalAnswerer
+from app.answer.local import LocalAnswerer, finish
 from app.answer.pipeline import Prepared, prepare
+from app.answer.verify import citations, verify
 from app.llm.server import LlamaServer
 from app.core.config import Settings
 
@@ -78,16 +79,20 @@ class SearchService:
 
     async def answer(self, query: str, domain: str | None = None, mode: str | None = None) -> dict[str, Any]:
         p = await asyncio.to_thread(self.prepare, query, mode)
+        verification = None
         if p.outcome == SOURCES_ONLY or self.answerer is None:
             answer = p.fallback
         else:
-            answer = await self.answerer.generate(p)
+            text, v = verify("".join([t async for t in self.answerer.stream(p)]), p.evidence)
+            answer, verification = finish(text), v.to_dict()
         return {
             "query": query,
             "domain": domain or self.queryRouter.route(query),
             "sources": p.sources,
             "answer": answer,
             "gate": {"outcome": p.outcome, "reason": p.reason, "unknown": p.unknown},
+            "citations": citations(p.evidence),
+            "verification": verification,
         }
 
     @property

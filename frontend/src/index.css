@@ -511,6 +511,18 @@ body {
 }
 .citation-chip--unverified:hover { background: #c9850030; }
 
+/* ── Verifier warning: provisions or figures not found in the answer's sources ── */
+.verify-note {
+  margin: 14px 0 4px;
+  padding: 9px 12px;
+  border: 1px dashed #c98500;
+  border-radius: 6px;
+  background: #c9850014;
+  color: #7a5000;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 /* ── Streaming cursor: follows the last block of the markdown as it grows ── */
 .answer-md--streaming > :last-child::after,
 .answer-md--streaming > ul:last-child > li:last-child::after,

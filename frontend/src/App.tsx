@@ -39,7 +39,7 @@ export default function App() {
   // ── Hooks ─────────────────────────────────────────────────────────
   const { entries, addEntry, removeEntry, clearAll } = useHistory()
   const { appState, stage, answer, sources, domain: streamDomain,
-          error, stream, cancel, reset } = useStream()
+          error, verification, stream, cancel, reset } = useStream()
   const backendStatus = useBackend()
 
   const isStreaming = appState === 'streaming'
@@ -172,6 +172,7 @@ export default function App() {
                 appState={shownState}
                 stage={stage}
                 error={shownError}
+                verification={liveMode ? verification : null}
                 onCitationClick={handleCitationClick}
               />
             )}

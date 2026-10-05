@@ -41,6 +41,7 @@ request.is_disconnected() on each token — if True, we break early.
 """
 
 import json
+import logging
 import httpx
 import asyncio
 from typing import AsyncIterator
@@ -50,11 +51,14 @@ from fastapi.responses import StreamingResponse
 
 from app.answer.gate import SOURCES_ONLY
 from app.answer.local import finish
+from app.answer.verify import citations, verify
 from app.answer.sources_only import sources_only_answer
 from app.api.deps import get_rag_system
 from app.schemas.requests import AnswerRequest
 from app.schemas.responses import AnswerResponse, SourceChunk
 
+
+logger = logging.getLogger("parai-legal")
 
 router = APIRouter(
     prefix="/api/v1/answer",
@@ -124,6 +128,9 @@ async def answer(
         domain=result["domain"],
         answer=result["answer"],
         sources=[_to_source_chunk(s) for s in result["sources"]],
+        gate=result.get("gate"),
+        citations=result.get("citations"),
+        verification=result.get("verification"),
     )
 
 
@@ -387,6 +394,10 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
                      request: Request) -> AsyncIterator[str]:
     """Events: sources, gate, [status: loading], token..., done (or error).
 
+    `done` carries the final answer (source numbers that point nowhere removed), `citations`
+    (what each [n] refers to: [n] is the n-th source sent in `sources`) and `verification`
+    (app/answer/verify.py).
+
     Everything runs on this machine, so the v1 proxy keepalive is not needed. When the gate
     declines, or no answer model is installed, the answer is written by code (`fallback`)."""
     try:
@@ -403,7 +414,7 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
                 "mode": p.mode})
 
     if p.outcome == SOURCES_ONLY or rag.answerer is None:
-        yield _sse({"type": "done", "answer": p.fallback})
+        yield _sse({"type": "done", "answer": p.fallback, "citations": citations(p.evidence)})
         return
 
     if not rag.answerer.ready:
@@ -418,4 +429,9 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
     except Exception as e:
         yield _sse({"type": "error", "detail": f"{e}. The matching provisions are listed in the sources."})
         return
-    yield _sse({"type": "done", "answer": finish("".join(pieces))})
+    # the verifier: drops [n] that point nowhere, flags provisions and figures not in the sources
+    fixed, v = verify("".join(pieces), p.evidence)
+    if v.warning or v.invalid_ids:
+        logger.warning("Verifier on %r: %s", p.question, v.to_dict())
+    yield _sse({"type": "done", "answer": finish(fixed), "citations": citations(p.evidence),
+                "verification": v.to_dict()})

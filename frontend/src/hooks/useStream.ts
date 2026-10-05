@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
-import type { SourceChunk, AppState, QueryMode } from '../types'
+import type { SourceChunk, AppState, QueryMode, Verification } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -13,9 +13,12 @@ interface StreamState {
   sources: SourceChunk[]
   domain: string
   error: string
+  verification: Verification | null  // the backend's check of the finished answer
 }
 
-const INITIAL: StreamState = { appState: 'idle', stage: 'searching', answer: '', sources: [], domain: '', error: '' }
+const INITIAL: StreamState = {
+  appState: 'idle', stage: 'searching', answer: '', sources: [], domain: '', error: '', verification: null,
+}
 
 export function useStream() {
   const [state, setState] = useState<StreamState>(INITIAL)
@@ -93,7 +96,8 @@ export function useStream() {
           } else if (event.type === 'done') {
             const full = (event.answer as string) ?? assembledTokens
             const display = full.replace(/\n\n⚖.*$/s, '').replace(/⚖.*$/s, '').trimEnd()
-            setState(s => ({ ...s, appState: 'done', answer: display }))
+            const verification = (event.verification as Verification | undefined) ?? null
+            setState(s => ({ ...s, appState: 'done', answer: display, verification }))
             onDone(display, finalSources, finalDomain)
             return
           } else if (event.type === 'error') {
