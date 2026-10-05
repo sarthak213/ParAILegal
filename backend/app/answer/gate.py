@@ -21,6 +21,10 @@ from dataclasses import dataclass, field
 
 ANSWER, CAVEAT, SOURCES_ONLY = "answer", "caveat", "sources_only"
 EVIDENCE_HITS = 5  # top hits by rank given to the answer model: 92% of essential provisions
+# ... minus any hit this many logits below the best one: drops the long tail (a "presumption as
+# to foreign law" section in a cheque-bounce answer) at a cost of 0.8 points of essential
+# provisions on dev and none on test; it confused the 4B model when left in
+EVIDENCE_MARGIN = 10.0
 
 # Law of another country: the corpus is Indian law only. Skipped when the question also
 # mentions India ("compare US and Indian law"), since the Indian half can still be answered.
@@ -87,6 +91,7 @@ def decide(query: str, hits: list[dict], unknown: list[str] | None = None,
     top, cos = best_logit(hits), best_cos(hits)
     if top is None:  # no reranker: nothing to judge relevance by, so answer carefully
         return Decision(CAVEAT, evidence, "relevance not scored")
+    evidence = [h for h in evidence if h.get("_ce") is None or h["_ce"] >= top - EVIDENCE_MARGIN]
     if top < t.low and (cos is None or cos < t.cos_low):
         return Decision(SOURCES_ONLY, [], "no provision clearly matches the question")
     if top >= t.high:

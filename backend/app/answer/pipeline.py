@@ -16,7 +16,9 @@ from typing import Any
 
 from app.answer.evidence import Evidence, assemble, render
 from app.answer.gate import CAVEAT, SOURCES_ONLY, decide
+from app.answer.prompts import RESEARCH, mode_of
 from app.answer.sources_only import DEFAULT_LEAD, sources_only_answer
+from app.search.query import strip_mode
 
 NEAREST = 5  # provisions listed when the gate declines for lack of a clear match
 
@@ -31,6 +33,8 @@ class Prepared:
     context: str = ""
     fallback: str = ""
     unknown: list[str] = field(default_factory=list)
+    mode: str = RESEARCH
+    question: str = ""  # the query without its mode prefix ("ADVOCATE: ...")
 
 
 def readable_ref(ref: str) -> str:
@@ -57,16 +61,19 @@ def lead(outcome: str, reason: str, unknown: list[str]) -> str:
     return DEFAULT_LEAD
 
 
-def prepare(query: str, engine: Any, k: int) -> Prepared:
+def prepare(query: str, engine: Any, k: int, mode: str | None = None) -> Prepared:
+    """mode: research / summarise / advocate; if None, read from a "SUMMARISE: ..." prefix."""
+    prefix, question = strip_mode(query)
+    mode = mode_of(mode or prefix)
     hits = engine.search(query, k=k)
     unknown = engine.unknown_citations(query)
-    d = decide(query, hits, unknown)
+    d = decide(question, hits, unknown)
     if d.outcome == SOURCES_ONLY:
         nearest = [] if (d.unknown or "another country" in d.reason or not hits) else hits[:NEAREST]
-        return Prepared(query, d.outcome, d.reason, nearest, unknown=d.unknown,
+        return Prepared(query, d.outcome, d.reason, nearest, unknown=d.unknown, mode=mode, question=question,
                         fallback=sources_only_answer(nearest, lead(d.outcome, d.reason, d.unknown)))
     evidence = assemble(d.evidence, engine)
     sources = [e.hit for e in evidence]
     return Prepared(query, d.outcome, d.reason, sources, evidence, render(evidence),
                     fallback=sources_only_answer(sources, lead(d.outcome, d.reason, d.unknown)),
-                    unknown=d.unknown)
+                    unknown=d.unknown, mode=mode, question=question)

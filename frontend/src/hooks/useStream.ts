@@ -4,7 +4,7 @@ import type { SourceChunk, AppState, QueryMode } from '../types'
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 /** What the pipeline is doing before the first answer token arrives. */
-export type StreamStage = 'searching' | 'reading' | 'thinking' | 'writing'
+export type StreamStage = 'searching' | 'reading' | 'loading' | 'thinking' | 'writing'
 
 interface StreamState {
   appState: AppState
@@ -80,8 +80,11 @@ export function useStream() {
             finalDomain = (event.domain as string) ?? ''
             setState(s => ({ ...s, stage: 'reading', sources: finalSources, domain: finalDomain }))
           } else if (event.type === 'status') {
-            // A reasoning model is thinking before it writes (can take 15-30 s)
-            if (event.stage === 'thinking') setState(s => ({ ...s, stage: 'thinking' }))
+            // the local answer model is loading (first question), or a reasoning model is thinking
+            if (event.stage === 'loading' || event.stage === 'thinking') {
+              const stage = event.stage as StreamStage
+              setState(s => ({ ...s, stage }))
+            }
           } else if (event.type === 'token') {
             assembledTokens += (event.token as string) ?? ''
             // Strip disclaimer for streaming display

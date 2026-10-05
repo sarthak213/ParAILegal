@@ -79,6 +79,7 @@ const AnswerMarkdown = memo(function AnswerMarkdown({ markdown, sources, onCitat
 const STAGE_LABEL: Record<StreamStage, string> = {
   searching: 'Searching the legal corpus…',
   reading: 'Reading the retrieved provisions…',
+  loading: 'Loading the answer model (first question only)…',
   thinking: 'Reasoning over the provisions…',
   writing: 'Writing the answer…',
 }

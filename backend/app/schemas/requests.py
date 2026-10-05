@@ -29,6 +29,12 @@ class AnswerRequest(BaseModel):
         max_length=4000,
     )
 
+    # research (default), summarise or advocate; a "SUMMARISE: ..." query prefix also works
+    mode: str | None = Field(
+        default=None,
+        pattern="^(?i:research|summarise|summarize|advocate)$",
+    )
+
     domain: str | None = Field(
         default=None,
         pattern="^(constitution|statutes|judgements|all)?$",

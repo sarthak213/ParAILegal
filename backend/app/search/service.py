@@ -2,8 +2,9 @@
 
 The routes call `search(query, k, domain)`, read `queryRouter`, `answerer` and `settings`, and
 `index_stats()` for /ready; RAGSystem (v1: Qdrant, Cohere, Groq, Sarvam) offers the same.
-Everything here runs locally. Until the local answer model is wired in, `answerer` is None
-and answers are written by code from the gated evidence (app/answer/pipeline.py).
+Everything here runs locally: search, then the gate and evidence (app/answer/pipeline.py),
+then the local answer model (app/answer/local.py). Without a model file, `answerer` is None and
+answers are written by code from the evidence.
 """
 
 from __future__ import annotations
@@ -12,7 +13,10 @@ import asyncio
 from collections import Counter
 from typing import Any
 
+from app.answer.gate import SOURCES_ONLY
+from app.answer.local import LocalAnswerer
 from app.answer.pipeline import Prepared, prepare
+from app.llm.server import LlamaServer
 from app.core.config import Settings
 
 
@@ -33,10 +37,33 @@ class SearchService:
         )
         self.queryRouter = self.engine.router
         print(f"v2 search ready: {len(self.engine.chunks)} chunks.")
+
+        s = self.settings
+        server = LlamaServer(s.LLM_ENGINE_DIR, s.LLM_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
+                             s.LLM_CTX, s.LLM_IDLE_UNLOAD_S, s.LLM_DEVICE)
+        if server.installed:
+            self.answerer = LocalAnswerer(server, s.TEMPERATURE_ANSWER)
+            print(f"Answer model: {server.model.name} (loads on the first answer)")
+            if s.LLM_PRELOAD:
+                asyncio.create_task(self._preload())
+        else:
+            print(f"No answer model at {server.model}: answers list the matching provisions.")
         return True
 
+    async def _preload(self) -> None:
+        try:
+            await self.answerer.server.ensure_running()
+        except RuntimeError as e:
+            print(f"Answer model failed to preload: {e}")
+
+    def model_status(self) -> dict:
+        if self.answerer is None:
+            return {"state": "not_installed"}
+        return self.answerer.server.status()
+
     async def aclose(self) -> None:
-        pass
+        if self.answerer:
+            await self.answerer.aclose()
 
     def search(self, query: str, k: int | None = None, domain: str | None = None) -> list[dict]:
         """Synchronous; routes call it through asyncio.to_thread."""
@@ -45,17 +72,21 @@ class SearchService:
             h["_rrf_score"] = h["_score"]
         return hits
 
-    def prepare(self, query: str) -> Prepared:
+    def prepare(self, query: str, mode: str | None = None) -> Prepared:
         """Search, gate and evidence for an answer (app/answer/pipeline.py). Synchronous."""
-        return prepare(query, self.engine, self.settings.TOP_K_SEARCH)
+        return prepare(query, self.engine, self.settings.TOP_K_SEARCH, mode)
 
-    async def answer(self, query: str, domain: str | None = None) -> dict[str, Any]:
-        p = await asyncio.to_thread(self.prepare, query)
+    async def answer(self, query: str, domain: str | None = None, mode: str | None = None) -> dict[str, Any]:
+        p = await asyncio.to_thread(self.prepare, query, mode)
+        if p.outcome == SOURCES_ONLY or self.answerer is None:
+            answer = p.fallback
+        else:
+            answer = await self.answerer.generate(p)
         return {
             "query": query,
             "domain": domain or self.queryRouter.route(query),
             "sources": p.sources,
-            "answer": p.fallback,
+            "answer": answer,
             "gate": {"outcome": p.outcome, "reason": p.reason, "unknown": p.unknown},
         }
 

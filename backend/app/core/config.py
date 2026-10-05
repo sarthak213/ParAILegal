@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
+MODELS_DIR = BASE_DIR / "models"
 STATUTES_DIR = DATA_DIR / "statutes"
 
 
@@ -41,6 +42,17 @@ class Settings(BaseSettings):
     SEARCH_ENGINE:       str   = "v2"
     DENSE_MODEL:         str   = "bge-small"     # app/search/dense.py SPECS key; "" for none
     RERANK_MODEL:        str   = "minilm-l6"     # app/search/rerank.py key; "" for none
+
+    # ── Local answer model (llama.cpp's llama-server, app/llm/server.py) ──
+    # No model file -> answers are written by code from the evidence (sources only)
+    LLM_ENGINE_DIR:      Path  = MODELS_DIR / "engine"  # llama.cpp builds in cpu/ and vulkan/
+    LLM_DEVICE:          str   = "auto"   # auto (GPU, then CPU), gpu or cpu: see app/llm/server.py
+    LLM_MODEL_PATH:      Path  = MODELS_DIR / "llm" / "Qwen3.5-4B-Q4_K_M.gguf"
+    LLM_THREADS:         int   = 6      # generation threads: about half the cores, to stay cool
+    LLM_BATCH_THREADS:   int   = 8      # prompt-processing threads
+    LLM_CTX:             int   = 8192
+    LLM_IDLE_UNLOAD_S:   float = 600    # stop the model after 10 idle minutes, freeing ~3 GB
+    LLM_PRELOAD:         bool  = False  # load the model at start-up instead of on the first answer
 
     TOP_K_SEARCH:        int   = 15
     TOP_K_ANSWER:        int   = 5

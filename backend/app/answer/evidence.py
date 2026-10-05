@@ -18,8 +18,10 @@ from typing import Protocol
 
 from app.answer.sources_only import heading, status_note
 
-PROVISION_TOKENS = 600
-BUDGET_TOKENS = 2500
+# The prompt is read at ~370 tokens/s on the Arc GPU and ~80 on the CPU, so the evidence size
+# is what sets the wait before the answer starts
+PROVISION_TOKENS = 400
+BUDGET_TOKENS = 1800
 MAX_PROVISIONS = 6
 MAX_LINKS = 2          # replacements added per repealed provision
 OPENING_WORDS = 60     # kept from the start of a trimmed provision
