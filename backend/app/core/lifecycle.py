@@ -19,14 +19,20 @@ async def lifespan(app: FastAPI):
     app.state.ready = False
     app.state.rag_system = None
 
-    rag = RAGSystem(settings)
+    if settings.SEARCH_ENGINE == "v2":
+        from app.search.service import SearchService
+
+        rag = SearchService(settings)
+    else:
+        rag = RAGSystem(settings)
 
     try:
-        # initialize() is now async — awaited directly.
-        # Internally it:
-        #   - awaits load_models()  (async httpx calls to LM Studio)
-        #   - runs index init in threads via asyncio.to_thread (disk + embedding)
-        await rag.initialize(force_rebuild=False)
+        if settings.SEARCH_ENGINE == "v2":
+            await rag.initialize()
+        else:
+            # v1: awaits load_models() (cloud API checks), then builds or loads the Qdrant
+            # indices in threads via asyncio.to_thread
+            await rag.initialize(force_rebuild=False)
 
         app.state.rag_system = rag
         app.state.ready = True
