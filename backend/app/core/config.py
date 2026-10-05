@@ -15,24 +15,24 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Sarvam (answer generation — unchanged) ────────────────────────
-    SARVAM_API_KEY: str
+    # ── v1 cloud services ─────────────────────────────────────────────
+    # Used only when SEARCH_ENGINE="v1"; v2 runs offline and needs none of these keys.
+    # Sarvam: answer generation
+    SARVAM_API_KEY: str = ""
     SARVAM_MODEL:   str = "sarvam-105b"
 
-    # ── Groq (query rewriter — Llama 3.1 8B, free tier) ──────────────
-    GROQ_API_KEY: str
+    # Groq: query rewriter
+    GROQ_API_KEY: str = ""
     GROQ_MODEL:   str = "llama-3.1-8b-instant"
 
-    # ── Cohere (embeddings + reranking — free trial tier) ─────────────
-    # embed-multilingual-v3.0: 1024-dim, same as BGE-M3, supports 100+ languages
-    # rerank-multilingual-v3.0: added later for retrieval quality improvement
-    COHERE_API_KEY:       str
+    # Cohere: embeddings + reranking
+    COHERE_API_KEY:       str = ""
     COHERE_EMBED_MODEL:   str = "embed-multilingual-v3.0"
     COHERE_RERANK_MODEL:  str = "rerank-multilingual-v3.0"
 
-    # ── Qdrant (vector database — cloud hosted) ───────────────────────
-    QDRANT_URL:        str
-    QDRANT_API_KEY:    str
+    # Qdrant: vector database
+    QDRANT_URL:        str = ""
+    QDRANT_API_KEY:    str = ""
     QDRANT_COLLECTION: str = "ParAILegal"
 
     # ── Retrieval ─────────────────────────────────────────────────────

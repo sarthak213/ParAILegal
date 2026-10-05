@@ -48,6 +48,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.answer.sources_only import sources_only_answer
 from app.api.deps import get_rag_system
 from app.schemas.requests import AnswerRequest
 from app.schemas.responses import AnswerResponse, SourceChunk
@@ -227,17 +228,10 @@ async def _stream_answer(
         "sources": sources_payload,
     })
 
-    if not top:
+    if not top or rag.answerer is None:
+        # No answer model (offline v2 until the local model is wired in): list the provisions
         heartbeat_task.cancel()
-        yield _sse({
-            "type":   "done",
-            "answer": (
-                "No relevant provisions were retrieved for this query. "
-                "Please try rephrasing or narrowing the question.\n\n"
-                "⚖ This is a research tool. Verify all provisions against "
-                "the official Gazette. This is not legal advice."
-            ),
-        })
+        yield _sse({"type": "done", "answer": sources_only_answer(top)})
         return
 
     # ── Step 2: Build context and stream Sarvam ───────────────────────

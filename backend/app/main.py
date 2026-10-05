@@ -43,6 +43,12 @@ async def ready():
 
     if not app.state.ready:
 
+        if app.state.error:
+            return {
+                "status": "failed",
+                "error": app.state.error,
+            }
+
         return {
             "status": "starting"
         }
