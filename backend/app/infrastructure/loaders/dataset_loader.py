@@ -274,6 +274,8 @@ class ConstitutionLoader:
 
 
 def _constitution_status(item: Dict) -> str:
+    if item.get("status"):  # set by scripts/build_constitution.py
+        return item["status"]
     text = item.get("text", "")
     if text.lstrip().startswith("[OMITTED]"):
         return "omitted"
@@ -344,8 +346,9 @@ class StatuteLoader:
             return [], []
 
         source_type = raw[0].get("source_type", "unknown")
-        doc_title   = _STATUTE_TITLES.get(source_type, source_type.upper())
-        status      = _STATUTE_STATUS.get(source_type, "active")
+        # corpus built by scripts/build_corpus.py names the Act and its status in each record
+        doc_title   = raw[0].get("act_title") or _STATUTE_TITLES.get(source_type, source_type.upper())
+        status      = raw[0].get("status") or _STATUTE_STATUS.get(source_type, "active")
 
         texts:    List[str]  = []
         metadata: List[Dict] = []
@@ -374,6 +377,16 @@ class StatuteLoader:
                 "ipc_equivalent":   item.get("ipc_equivalent"),
                 "chapter_title":    item.get("chapter_title", ""),
                 "section_title":    item.get("section_title", ""),
+                "act_code":         item.get("act_code") or source_type.upper(),
+                "corresponds_to":   item.get("corresponds_to", []),
+                "replaced_by":      item.get("replaced_by"),
+                "repeal_pending":   item.get("repeal_pending", False),  # repealed from a date not yet known
+                "derived_links":    item.get("derived_links", []),  # [{ref, score}]: derived, not official
+                "authority":        item.get("authority"),
+                "scope":            item.get("scope", "national"),  # or "regional" (a local Act)
+                "places":           item.get("places", []),          # the territory a regional Act covers
+                "text_quality":     item.get("text_quality", "clean"),
+                "year":             item.get("year"),
             }
 
             texts.append(text)

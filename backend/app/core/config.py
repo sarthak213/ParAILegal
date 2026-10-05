@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
+STATUTES_DIR = DATA_DIR / "statutes"
 
 
 class Settings(BaseSettings):
@@ -35,6 +36,12 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "ParAILegal"
 
     # ── Retrieval ─────────────────────────────────────────────────────
+    # ── Search engine ─────────────────────────────────────────────────
+    # "v2": local corpus with BM25 + dense + reranker (app/search); "v1": Qdrant + Cohere + Groq
+    SEARCH_ENGINE:       str   = "v2"
+    DENSE_MODEL:         str   = "bge-small"     # app/search/dense.py SPECS key; "" for none
+    RERANK_MODEL:        str   = "minilm-l6"     # app/search/rerank.py key; "" for none
+
     TOP_K_SEARCH:        int   = 15
     TOP_K_ANSWER:        int   = 5
     TEMPERATURE_REWRITE: float = 0.1
@@ -47,13 +54,11 @@ class Settings(BaseSettings):
     RETRY_DELAY: float = 1.0
 
     # ── Data paths (used only during ingestion, not at query time) ────
-    CONSTITUTION_FILE: Path = DATA_DIR / "constitution_final.jsonl"
+    # Built from the Legislative Department's official PDF by scripts/build_constitution.py
+    CONSTITUTION_FILE: Path = DATA_DIR / "constitution.jsonl"
 
-    STATUTE_FILES: list[Path] = [
-        DATA_DIR / "bns_clean.jsonl",
-        DATA_DIR / "bnss_clean.jsonl",
-        DATA_DIR / "bsa_clean.jsonl",
-    ]
+    # One JSONL per Act, built from India Code by scripts/build_corpus.py
+    STATUTE_FILES: list[Path] = sorted(STATUTES_DIR.glob("*.jsonl")) if STATUTES_DIR.exists() else []
 
     JUDGEMENT_FILES: list[Path] = [
         DATA_DIR / "landmarks.jsonl",
