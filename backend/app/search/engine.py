@@ -67,6 +67,7 @@ class Components:
     routed: str
     wants_old: bool = False  # the query cites or names a replaced law
     text: str = ""           # the query, lower-cased (does it name a local Act's territory?)
+    dense_score: dict[int, float] = field(default_factory=dict)  # cosine of each dense hit
 
 
 SUPERSEDED = ("repealed", "omitted")
@@ -181,10 +182,12 @@ class SearchEngine:
         case_refs = dict.fromkeys(ref for key, ref in self.case_keys if fuzz.partial_ratio(key, low) >= 88)
         cases = [i for ref in case_refs for i in self.by_ref[ref]]
         bm = [i for i, _ in self.bm25.search(pq.keywords, limit=60, weights=self.weights.fields)]
-        dn = [i for i, _ in self.dense(pq.text, 60)] if self.dense is not None else []
+        dense_hits = self.dense(pq.text, 60) if self.dense is not None else []
+        dn = [i for i, _ in dense_hits]
         routed = domain or (self.router.route(pq.text) if self.router else "all")
         wants_old = any(c.via or c.act in OLD_CODES for c in pq.citations) or bool(_OLD_LAW.search(pq.text))
-        return Components(exact, uncertain, cases, bm, dn, routed, wants_old, pq.text.lower())
+        return Components(exact, uncertain, cases, bm, dn, routed, wants_old, pq.text.lower(),
+                          {i: s for i, s in dense_hits})
 
     def prior(self, i: int, comp: Components, weights: Weights) -> float:
         """How much a provision's standing, apart from its wording, should count for this query:
@@ -233,33 +236,67 @@ class SearchEngine:
                 break
         return out
 
-    def rerank(self, query: str, comp: Components, fused: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
-        """Re-order fused candidates with the cross-encoder. Provisions the user named stay first."""
+    def rerank(self, query: str, comp: Components, fused: list[tuple[int, float]], k: int
+               ) -> tuple[list[tuple[int, float]], dict[int, float]]:
+        """Re-order fused candidates with the cross-encoder. Provisions the user named stay first.
+        Also returns each re-ordered candidate's raw cross-encoder logit (before the priors):
+        how well its wording answers the question, which the answer gate reads."""
         pinned = [(i, s) for i, s in fused if i in set(comp.exact)]
         rest = [(i, s) for i, s in fused if i not in set(comp.exact)]
+        raw: dict[int, float] = {}
         if rest and self.reranker is not None:
             scores = self.reranker(query, [self.chunks[i]["_embed_text"] for i, _ in rest])
+            raw = {i: sc for (i, _), sc in zip(rest, scores, strict=True)}
             # the cross-encoder judges wording only; add the priors (as a log, since its scores
             # are logits) so it does not undo them: a local or repealed Act stays held back
             w = self.weights.rerank_prior
             rest = sorted(((i, sc + w * math.log(self.prior(i, comp, self.weights)))
                            for (i, _), sc in zip(rest, scores, strict=True)), key=lambda kv: -kv[1])
-        return (pinned + rest)[:k]
+        return (pinned + rest)[:k], raw
 
     def search(self, query: str, k: int = 10, domain: str | None = None) -> list[dict]:
+        """Ranked hits. Besides the chunk's fields, each hit carries the signals the answer gate
+        reads: `_exact` (the query named this provision), `_ce` (raw cross-encoder logit, None if
+        not reranked), `_bm25_rank` / `_dense_rank` (1-based rank in each retriever, or None) and
+        `_cos` (the best dense cosine among the query's dense hits: low for off-topic questions)."""
         comp = self.components(query, domain)
+        raw: dict[int, float] = {}
         if self.reranker is not None:
             pool = self.fuse(comp, self.weights, max(k, self.weights.rerank_top))
             # the reranker is English-only: give it typo-corrected text plus glossary translations
-            ranked = self.rerank(self.parser.parse(query).english, comp, pool, k)
+            ranked, raw = self.rerank(self.parser.parse(query).english, comp, pool, k)
         else:
             ranked = self.fuse(comp, self.weights, k)
+        bm25_rank = self._ref_ranks(comp.bm25)
+        dense_rank = self._ref_ranks(comp.dense)
+        exact = {self._refs[i] for i in comp.exact}
+        cos = round(max(comp.dense_score.values()), 4) if comp.dense_score else None
         out = []
         for rank, (i, score) in enumerate(ranked, start=1):
+            ref = self._refs[i]
             hit = {key: v for key, v in self.chunks[i].items() if not key.startswith("_")}
-            hit.update(_score=round(score, 6), _rank=rank, _ref=ref_of(self.chunks[i]))
+            hit.update(_score=round(score, 6), _rank=rank, _ref=ref, _exact=ref in exact,
+                       _ce=round(raw[i], 4) if i in raw else None,
+                       _bm25_rank=bm25_rank.get(ref), _dense_rank=dense_rank.get(ref), _cos=cos)
             out.append(hit)
         return out
+
+    def _ref_ranks(self, idxs: list[int]) -> dict[str, int]:
+        """Best 1-based rank of each provision in a retriever's list (its parts count as one)."""
+        ranks: dict[str, int] = {}
+        for rank, i in enumerate(idxs, start=1):
+            ranks.setdefault(self._refs[i], rank)
+        return ranks
+
+    def unknown_citations(self, query: str) -> list[str]:
+        """Provisions the query names with certainty that the corpus does not hold
+        ("BNS 999", "ART 512"): the answer says so instead of guessing."""
+        return [c.ref for c in self.parser.parse(query).citations if c.certain and c.ref not in self.by_ref]
+
+    def provision(self, ref: str) -> list[dict]:
+        """All chunks of one provision, in document order: the parts of a long section, an
+        Article's clauses, a judgment's paragraphs."""
+        return [self.chunks[i] for i in self.by_ref.get(ref, [])]
 
     # ── Construction ───────────────────────────────────────────────────
 

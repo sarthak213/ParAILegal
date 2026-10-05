@@ -41,17 +41,18 @@ def excerpt(text: str, words: int = _EXCERPT_WORDS) -> str:
     return " ".join(parts[:words]) + (" …" if len(parts) > words else "")
 
 
-def sources_only_answer(sources: list[dict]) -> str:
+DEFAULT_LEAD = (
+    "**No answer model is set up, so here are the provisions that best match your "
+    "question.** Open a source card to read the full text."
+)
+
+
+def sources_only_answer(sources: list[dict], lead: str | None = None) -> str:
+    """The provisions as a numbered list under a lead line (app/answer/pipeline.py picks it)."""
     if not sources:
-        return (
-            "No relevant provisions were found for this question. "
-            "Try rephrasing it, or name the Act or section.\n\n" + DISCLAIMER
-        )
-    lines = [
-        "**No answer model is set up, so here are the provisions that best match your "
-        "question.** Open a source card to read the full text.",
-        "",
-    ]
+        return (lead or "No relevant provisions were found for this question. "
+                "Try rephrasing it, or name the Act or section.") + "\n\n" + DISCLAIMER
+    lines = [lead or DEFAULT_LEAD, ""]
     for n, s in enumerate(sources, start=1):
         note = status_note(s)
         lines.append(f"{n}. **{heading(s)}**" + (f" — *{note}*" if note else ""))

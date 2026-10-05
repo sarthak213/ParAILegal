@@ -195,6 +195,22 @@ async def _stream_answer(
         """Format a dict as an SSE data line."""
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+    if rag.answerer is None:
+        # v2 without an answer model: search, gate and evidence, then the answer written by code
+        try:
+            p = await asyncio.to_thread(rag.prepare, query)
+        except Exception as e:
+            yield _sse({"type": "error", "detail": f"Retrieval failed: {e}"})
+            return
+        yield _sse({
+            "type":    "sources",
+            "domain":  domain or rag.queryRouter.route(query),
+            "sources": [_to_source_chunk(s).model_dump(exclude_none=True) for s in p.sources],
+        })
+        yield _sse({"type": "gate", "outcome": p.outcome, "reason": p.reason, "unknown": p.unknown})
+        yield _sse({"type": "done", "answer": p.fallback})
+        return
+
     # ── Step 1: Retrieve sources (sync → thread) ──────────────────────
     # Start heartbeat immediately — retrieval can take 5-10s on cold start
     # and some proxies will close the connection before the first byte.
@@ -228,8 +244,7 @@ async def _stream_answer(
         "sources": sources_payload,
     })
 
-    if not top or rag.answerer is None:
-        # No answer model (offline v2 until the local model is wired in): list the provisions
+    if not top:
         heartbeat_task.cancel()
         yield _sse({"type": "done", "answer": sources_only_answer(top)})
         return

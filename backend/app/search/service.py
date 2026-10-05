@@ -3,7 +3,7 @@
 The routes call `search(query, k, domain)`, read `queryRouter`, `answerer` and `settings`, and
 `index_stats()` for /ready; RAGSystem (v1: Qdrant, Cohere, Groq, Sarvam) offers the same.
 Everything here runs locally. Until the local answer model is wired in, `answerer` is None
-and answers list the matching provisions (app/answer/sources_only.py).
+and answers are written by code from the gated evidence (app/answer/pipeline.py).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import asyncio
 from collections import Counter
 from typing import Any
 
-from app.answer.sources_only import sources_only_answer
+from app.answer.pipeline import Prepared, prepare
 from app.core.config import Settings
 
 
@@ -45,14 +45,18 @@ class SearchService:
             h["_rrf_score"] = h["_score"]
         return hits
 
+    def prepare(self, query: str) -> Prepared:
+        """Search, gate and evidence for an answer (app/answer/pipeline.py). Synchronous."""
+        return prepare(query, self.engine, self.settings.TOP_K_SEARCH)
+
     async def answer(self, query: str, domain: str | None = None) -> dict[str, Any]:
-        results = await asyncio.to_thread(self.search, query, None, domain)
-        top = results[:self.settings.TOP_K_ANSWER]
+        p = await asyncio.to_thread(self.prepare, query)
         return {
             "query": query,
             "domain": domain or self.queryRouter.route(query),
-            "sources": top,
-            "answer": sources_only_answer(top),
+            "sources": p.sources,
+            "answer": p.fallback,
+            "gate": {"outcome": p.outcome, "reason": p.reason, "unknown": p.unknown},
         }
 
     @property
