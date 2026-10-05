@@ -8,8 +8,8 @@ chunk id, so the set survives re-chunking and corpus changes:
     "CASE maneka_gandhi"              landmark judgments (chunk-id stem)
 
 Grades: 2 = essential (the answer is wrong without it), 1 = supporting.
-Questions in "no_answer" have no relevant provisions in the corpus; "corpus_gap"
-questions are answerable in law but the provision is missing from the corpus today.
+Questions in "no_answer" have no relevant provisions in the corpus; "other_acts" covers Acts
+beyond the criminal codes and the Constitution, so tuning cannot simply favour the big codes.
 
 Splits alternate within each category: "dev" for tuning weights and thresholds,
 "test" for reporting. Run: python -m eval.build_questions
@@ -200,6 +200,9 @@ QUESTIONS: dict[str, list[tuple[str, dict[str, int]]]] = {
         ("Languages recognised in the Constitution", {"ART SCHEDULE_8": E}),
         ("Right to property after the 44th amendment", {"ART 300A": E}),
         ("Protection in respect of conviction for offences", {"ART 20": E}),
+        # missing from the old corpus (the "corpus_gap" questions), in the 2026 Constitution
+        ("What does Article 44 say about a uniform civil code?", {"ART 44": E}),
+        ("Prohibition of traffic in human beings and forced labour under the Constitution", {"ART 23": E}),
     ],
     # ── Landmark judgments ───────────────────────────────────────────────
     "judgement": [
@@ -268,38 +271,83 @@ QUESTIONS: dict[str, list[tuple[str, dict[str, int]]]] = {
         ("kesavanand bharti case", {"CASE kesavananda_bharati": E}),
     ],
     # ── No answer in the corpus: should abstain ──────────────────────────
-    "no_answer": [
-        ("What is the limitation period for a civil suit to recover money?", {}),
-        ("How do I file for divorce under the Hindu Marriage Act?", {}),
-        ("What is the GST rate on restaurant food?", {}),
-        ("What documents are needed to incorporate a private limited company?", {}),
-        ("Who won the 2011 Cricket World Cup?", {}),
-        ("How do I apply for a patent in India?", {}),
-        ("How is income tax calculated on salary?", {}),
-        ("What does the First Amendment to the US Constitution protect?", {}),
-        ("What is the minimum wage in Delhi?", {}),
-        ("Explain the doctrine of consideration in contract law", {}),
-        ("Can a landlord evict a tenant without notice under rent control law?", {}),
-        ("What is the best recipe for biryani?", {}),
+    # ── Acts beyond the criminal codes and the Constitution (corpus of 2026-10) ──────
+    # Guards against tuning that simply favours the big codes.
+    "other_acts": [
+        ("What is the limitation period for a civil suit to recover money?",
+         {"limitation_act_1963 SCHEDULE": E, "limitation_act_1963 3": S}),
+        ("How do I file for divorce under the Hindu Marriage Act?",
+         {"hindu_marriage_act_1955 13": E, "hindu_marriage_act_1955 13B": S}),
+        ("Divorce by mutual consent", {"hindu_marriage_act_1955 13B": E}),
+        ("How is a company incorporated?", {"companies_act_2013 7": E}),
+        ("How do I apply for a patent in India?", {"patents_act_1970 6": E, "patents_act_1970 7": E}),
+        ("How is the minimum wage fixed?", {"code_on_wages_2019 6": E, "code_on_wages_2019 9": S}),
+        ("Explain the doctrine of consideration in contract law",
+         {"indian_contract_act_1872 25": E, "indian_contract_act_1872 2": S}),
+        ("Can a landlord evict a tenant in Delhi?", {"delhi_rent_control_act_1958 14": E}),
+        ("Cheque bounce case for insufficient funds", {"negotiable_instruments_act_1881 138": E,
+                                                      "negotiable_instruments_act_1881 142": S}),
+        ("What information is exempt from disclosure under RTI?", {"right_to_information_act_2005 8": E}),
+        ("How do I file an RTI application?", {"right_to_information_act_2005 6": E,
+                                              "right_to_information_act_2005 7": S}),
+        ("How do I file a consumer complaint?", {"consumer_protection_act_2019 35": E}),
+        ("Penalty for giving or taking dowry", {"dowry_prohibition_act_1961 3": E,
+                                                "dowry_prohibition_act_1961 2": S}),
+        ("What counts as domestic violence?", {"protection_of_women_from_domestic_violence_act_2005 3": E}),
+        ("Punishment for penetrative sexual assault on a child",
+         {"protection_of_children_from_sexual_offences_act_2012 4": E}),
+        ("Punishment for identity theft online", {"information_technology_act_2000 66C": E}),
+        ("Drunk driving offence", {"motor_vehicles_act_1988 185": E}),
+        ("Daughters' rights in coparcenary property", {"hindu_succession_act_1956 6": E}),
+        ("Conditions for a marriage under the Special Marriage Act", {"special_marriage_act_1954 4": E}),
+        ("What is a sale of immovable property?", {"transfer_of_property_act_1882 54": E}),
+        ("Builder delayed possession of my flat: can I get a refund?",
+         {"real_estate_regulation_and_development_act_2016 18": E}),
+        ("Who appoints the arbitrator?", {"arbitration_and_conciliation_act_1996 11": E}),
+        ("Maintenance for senior citizens from their children",
+         {"maintenance_and_welfare_of_parents_and_senior_citizens_act_2007 4": E,
+          "hindu_adoptions_and_maintenance_act_1956 20": S}),
+        ("How to complain about sexual harassment at the workplace",
+         {"sexual_harassment_of_women_at_workplace_prevention_prohibition_and_redressal_act_2013 9": E,
+          "sexual_harassment_of_women_at_workplace_prevention_prohibition_and_redressal_act_2013 4": S}),
+        ("When is gratuity payable to an employee?", {"code_on_social_security_2020 53": E,
+                                                      "payment_of_gratuity_act_1972 4": S}),
+        ("New tax regime for individuals", {"income_tax_act_2025 202": E}),
+        ("Tax deduction for life insurance premium and provident fund",
+         {"income_tax_act_2025 123": E, "income_tax_act_1961 80C": S}),
+        ("Offence of money laundering", {"prevention_of_money_laundering_act_2002 3": E}),
+        ("Which documents must be compulsorily registered?", {"registration_act_1908 17": E}),
+        ("Conditions for terminating a pregnancy", {"medical_termination_of_pregnancy_act_1971 3": E}),
     ],
-    # ── Answerable in law, but missing from the corpus today ─────────────
-    "corpus_gap": [
-        ("What does Article 44 say about a uniform civil code?", {"ART 44": E}),
-        ("Prohibition of traffic in human beings and forced labour under the Constitution", {"ART 23": E}),
+    "no_answer": [
+        ("What is the GST rate on restaurant food?", {}),  # rates are notified, not in the Act
+        ("Who won the 2011 Cricket World Cup?", {}),
+        ("What does the First Amendment to the US Constitution protect?", {}),
+        ("What is the best recipe for biryani?", {}),
     ],
 }
 
 PREFIX = {
     "citation": "CIT", "statute_phrase": "PHR", "lay": "LAY", "old_code": "OLD",
     "constitution": "CON", "judgement": "JDG", "cross": "XDM", "hinglish": "HIN",
-    "typo": "TYP", "no_answer": "NOA", "corpus_gap": "GAP",
+    "typo": "TYP", "no_answer": "NOA", "other_acts": "ACT",
 }
 
 
 def build() -> list[dict]:
+    from app.search.legal_data import OLD_CODES
+    from app.search.query import find_citations
+
     rows = []
     for category, items in QUESTIONS.items():
         for i, (query, relevant) in enumerate(items, start=1):
+            if category == "old_code":
+                # the corpus now holds the old codes too: the section the question cites ("Section
+                # 438 CrPC") supports the answer; its replacement stays the essential one
+                relevant = dict(relevant)
+                for c in find_citations(query):
+                    if c.act in OLD_CODES:
+                        relevant.setdefault(c.ref, S)
             rows.append({
                 "id": f"{PREFIX[category]}{i:02d}",
                 "category": category,

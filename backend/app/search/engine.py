@@ -9,6 +9,7 @@ is a soft boost, never a filter, so a routing mistake can no longer hide the rig
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -29,14 +30,28 @@ DenseSearch = Callable[[str, int], list[tuple[int, float]]]
 
 @dataclass
 class Weights:
-    # Tuned on the dev split with eval/tune.py (the same optimum for every embedder tried).
-    exact: float = 2.0            # a provision named in the query
-    exact_uncertain: float = 1.0  # e.g. "dhara 302" read as IPC 302
+    # Tuned on the dev split with eval/tune.py --dense bge-small (2026-10-05, 892-Act corpus).
+    exact: float = 8.0            # a provision named in the query
+    exact_uncertain: float = 4.0  # e.g. "dhara 302" read as IPC 302
     case_name: float = 1.5
     bm25: float = 0.5
     dense: float = 0.5
     domain_boost: float = 0.0     # soft prior for the routed domain (tuning switched it off)
+    constitution_route: float = 0.5  # statutes scaled by 1/(1 + this) when a query is constitutional
+    # Repealed or omitted text (the IPC, the replaced labour laws, omitted articles) is scaled by
+    # this unless the query asks for the old law: current law answers first, and each old
+    # section stays one link away from its replacement ("corresponds_to").
+    superseded: float = 0.3
+    # How much the rest of the statute book cites an Act (0-1, from scripts/build_corpus.py):
+    # scores are scaled by 1 + authority * this, so the BNSS outranks the Madras District Police
+    # Act of 1859 on "arrest without warrant". The Constitution and landmark cases count as 1.
+    # Kept small: larger values bury the specialist Acts ("other_acts" questions).
+    authority: float = 0.3
+    # A local Act (the Madras District Police Act, 1859; the Delhi Rent Control Act) is scaled by
+    # this unless the query names its territory: a general question wants the law of all India.
+    regional: float = 0.5
     rerank_top: int = 20          # candidates the cross-encoder re-orders, when one is set
+    rerank_prior: float = 20.0    # weight of log(prior) added to the cross-encoder's score (tuned on dev)
     fields: FieldWeights = field(default_factory=FieldWeights)
 
 
@@ -50,10 +65,19 @@ class Components:
     bm25: list[int]
     dense: list[int]
     routed: str
+    wants_old: bool = False  # the query cites or names a replaced law
+    text: str = ""           # the query, lower-cased (does it name a local Act's territory?)
 
+
+SUPERSEDED = ("repealed", "omitted")
+# a query that asks about the old law: "under the IPC", "old CrPC", "the repealed Evidence Act"
+_OLD_LAW = re.compile(r"\b(?:ipc|i\.p\.c|indian penal code|crpc|cr\.?p\.?c|code of criminal procedure|"
+                      r"evidence act|iea|repealed|old (?:law|code|act|section)s?|previous(?:ly)?|"
+                      r"before (?:the )?(?:bns|bnss|bsa|2024|july 2024))\b", re.IGNORECASE)
 
 ACT_TITLES = {"BNS": "bharatiya nyaya sanhita", "BNSS": "bharatiya nagarik suraksha sanhita",
-              "BSA": "bharatiya sakshya adhiniyam"}
+              "BSA": "bharatiya sakshya adhiniyam", "IPC": "indian penal code",
+              "CRPC": "code of criminal procedure", "IEA": "indian evidence act"}
 _GENERIC_PARTY = re.compile(r"^(?:the\s+)?(?:state\s+of\s+\w+|union\s+of\s+india|.*municipal corporation.*)$",
                             re.IGNORECASE)
 
@@ -91,6 +115,9 @@ class SearchEngine:
         for i, c in enumerate(chunks):
             self.by_ref[ref_of(c)].append(i)
         self.case_keys = self._case_keys()
+        self._authority = [1.0 if c["_domain"] != "statutes" else float(c.get("authority") or 0.0)
+                           for c in chunks]
+        self._refs = [ref_of(c) for c in chunks]
         aliases = _old_aliases()
         docs = [self._index_doc(c, aliases) for c in chunks]
         self.bm25 = BM25Index(docs)
@@ -113,10 +140,16 @@ class SearchEngine:
         else:
             act = c["_act"]
             title = c.get("section_title") or ""
-            heading = f"section {c.get('section')} {act.lower()} {ACT_TITLES[act]} {c.get('chapter_title') or ''}"
+            act_name = ACT_TITLES.get(act) or (c.get("document_title") or "").lower()
+            heading = f"section {c.get('section')} {act.lower()} {act_name} {c.get('chapter_title') or ''}"
         old = list(aliases.get(ref, []))
         if c.get("ipc_equivalent"):
             old.append(str(c["ipc_equivalent"]).lower())
+        # linked sections of the Act it replaced or that replaced it ("income_tax_act_1961 80C"
+        # -> "income tax act 1961 section 80c"), so a search by the old number finds the new one
+        for linked in [*(c.get("corresponds_to") or []), *(d["ref"] for d in c.get("derived_links") or [])]:
+            act, _, number = linked.rpartition(" ")
+            old.append(f"{act.replace('_', ' ').lower()} section {number.lower()}")
         return {"title": title, "heading": heading, "body": c.get("text") or "", "aliases": " ".join(old)}
 
     def _case_keys(self) -> list[tuple[str, str]]:
@@ -150,7 +183,31 @@ class SearchEngine:
         bm = [i for i, _ in self.bm25.search(pq.keywords, limit=60, weights=self.weights.fields)]
         dn = [i for i, _ in self.dense(pq.text, 60)] if self.dense is not None else []
         routed = domain or (self.router.route(pq.text) if self.router else "all")
-        return Components(exact, uncertain, cases, bm, dn, routed)
+        wants_old = any(c.via or c.act in OLD_CODES for c in pq.citations) or bool(_OLD_LAW.search(pq.text))
+        return Components(exact, uncertain, cases, bm, dn, routed, wants_old, pq.text.lower())
+
+    def prior(self, i: int, comp: Components, weights: Weights) -> float:
+        """How much a provision's standing, apart from its wording, should count for this query:
+        the product of the soft priors. Fusion multiplies by it; the reranker adds its log."""
+        c = self.chunks[i]
+        factor = 1.0
+        if comp.routed and comp.routed != "all" and weights.domain_boost and c["_domain"] == comp.routed:
+            factor *= 1 + weights.domain_boost
+        if comp.routed == "constitution" and weights.constitution_route and c["_domain"] == "statutes":
+            # a constitutional question: Acts named after an institution (the Finance Commission
+            # Act, the Representation of the People Act) step back from the Articles; landmark
+            # cases keep their place, since many such questions are answered by a judgment
+            factor /= 1 + weights.constitution_route
+        if weights.authority:
+            factor *= 1 + weights.authority * self._authority[i]
+        if i in comp.exact:  # a provision the user named is never held back
+            return factor
+        if weights.regional != 1.0 and c.get("scope") == "regional" \
+                and not any(p in comp.text for p in c.get("places") or []):
+            factor *= weights.regional
+        if weights.superseded != 1.0 and not comp.wants_old and c.get("status") in SUPERSEDED:
+            factor *= weights.superseded
+        return factor
 
     def fuse(self, comp: Components, weights: Weights, k: int = 10) -> list[tuple[int, float]]:
         """Weighted reciprocal-rank fusion of the component lists, plus the soft domain boost."""
@@ -161,11 +218,20 @@ class SearchEngine:
             if weight:
                 for rank, i in enumerate(idxs, start=1):
                     scores[i] += weight / (RRF_K + rank)
-        if comp.routed and comp.routed != "all" and weights.domain_boost:
-            for i in scores:
-                if self.chunks[i]["_domain"] == comp.routed:
-                    scores[i] *= 1 + weights.domain_boost
-        return sorted(scores.items(), key=lambda kv: -kv[1])[:k]
+        for i in scores:
+            scores[i] *= self.prior(i, comp, weights)
+        # one entry per provision: a long section split into parts would otherwise fill several
+        # places ("CRPC 438, CRPC 438, CRPC 438") and push its BNSS equivalent out; its best part stands in
+        out, seen = [], set()
+        for i, s in sorted(scores.items(), key=lambda kv: -kv[1]):
+            ref = self._refs[i]
+            if ref in seen:
+                continue
+            seen.add(ref)
+            out.append((i, s))
+            if len(out) == k:
+                break
+        return out
 
     def rerank(self, query: str, comp: Components, fused: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
         """Re-order fused candidates with the cross-encoder. Provisions the user named stay first."""
@@ -173,7 +239,11 @@ class SearchEngine:
         rest = [(i, s) for i, s in fused if i not in set(comp.exact)]
         if rest and self.reranker is not None:
             scores = self.reranker(query, [self.chunks[i]["_embed_text"] for i, _ in rest])
-            rest = sorted(((i, sc) for (i, _), sc in zip(rest, scores, strict=True)), key=lambda kv: -kv[1])
+            # the cross-encoder judges wording only; add the priors (as a log, since its scores
+            # are logits) so it does not undo them: a local or repealed Act stays held back
+            w = self.weights.rerank_prior
+            rest = sorted(((i, sc + w * math.log(self.prior(i, comp, self.weights)))
+                           for (i, _), sc in zip(rest, scores, strict=True)), key=lambda kv: -kv[1])
         return (pinned + rest)[:k]
 
     def search(self, query: str, k: int = 10, domain: str | None = None) -> list[dict]:
@@ -216,7 +286,7 @@ class SearchEngine:
                 c["_domain"] = domain
                 c["source_type"] = domain
                 if domain == "statutes":
-                    c["_act"] = (c.get("chunk_id") or "").split("_")[0].upper()
+                    c["_act"] = c.get("act_code") or (c.get("chunk_id") or "").split("_")[0].upper()
                 chunks.append(c)
         if isinstance(dense, str):
             from app.search.dense import DenseIndex

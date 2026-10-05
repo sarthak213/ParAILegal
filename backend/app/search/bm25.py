@@ -43,12 +43,14 @@ class BM25Index:
         self.vocabulary = self._vocabulary(docs)
 
     @staticmethod
-    def _vocabulary(docs: list[dict[str, str]]) -> set[str]:
+    def _vocabulary(docs: list[dict[str, str]]) -> dict[str, int]:
+        """Word -> count (words seen at least twice); the counts let typo correction prefer a
+        common word over a rare one."""
         counts: Counter[str] = Counter()
         for d in docs:
             for field in ("title", "heading", "body"):
                 counts.update(re.findall(r"[a-z]{4,}", d.get(field, "").lower()))
-        return {w for w, n in counts.items() if n >= 2}
+        return {w: n for w, n in counts.items() if n >= 2}
 
     def search(self, keywords: list[str], limit: int = 50,
                weights: FieldWeights = FieldWeights()) -> list[tuple[int, float]]:

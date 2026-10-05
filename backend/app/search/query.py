@@ -9,6 +9,7 @@ Turns "dhara 302 kya hai" or "u/s 438 CrPC" into:
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ _SCHEDULE = re.compile(r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth
 _SCHEDULE_NUM = {w: i for i, w in enumerate(
     "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth".split(), 1)}
 _GLOSSARY_WORDS = frozenset(w for term in GLOSSARY for w in term.split())
+_GLOSSARY_ASCII = frozenset(w for w in _GLOSSARY_WORDS if w.isascii())
 _TOKEN = re.compile(r"[\wऀ-ॿ]+(?:'\w+)?", re.UNICODE)
 
 
@@ -103,7 +105,8 @@ def _resolve(act: str | None, number: str, explicit_section: bool) -> Citation |
     if act in OLD_CODES:
         new_act, table = OLD_CODES[act]
         target = table.get(number)
-        return Citation(new_act, target, via=f"{act} {number}") if target else None
+        # the replacement first; the old section itself is added alongside it (see find_citations)
+        return Citation(new_act, target, via=f"{act} {number}") if target else Citation(act, number)
     if act in ("BNS", "BNSS", "BSA"):
         return Citation(act, number)
     if explicit_section:
@@ -128,6 +131,9 @@ def find_citations(text: str) -> list[Citation]:
             for extra in SPLIT_TARGETS.get(c.via or "", []):  # e.g. IPC 498A -> BNS 85 and BNS 86
                 act, number = extra.split()
                 found.append(Citation(act, number, via=c.via, certain=c.certain))
+            if c.via:  # the old section too: lawyers compare the two ("IPC 302" -> BNS 103 + IPC 302)
+                act, number = c.via.split()
+                found.append(Citation(act, number, certain=c.certain))
 
     for m in _SECTION_FIRST.finditer(text):
         add(_resolve(_act_code(m.group(2)), m.group(1), explicit_section=True), m.span())
@@ -163,9 +169,12 @@ def _glossary_hits(text: str) -> list[str]:
 class QueryParser:
     """Holds the corpus vocabulary used for typo correction."""
 
-    def __init__(self, vocabulary: set[str] | None = None) -> None:
-        self.vocabulary = {w for w in (vocabulary or set()) if len(w) >= 4}
-        self._choices = sorted(self.vocabulary | {t for term in GLOSSARY for t in term.split() if t.isascii()})
+    def __init__(self, vocabulary: set[str] | dict[str, int] | None = None) -> None:
+        """vocabulary: corpus words, ideally with their counts (word -> count)."""
+        counts = vocabulary if isinstance(vocabulary, dict) else dict.fromkeys(vocabulary or (), 1)
+        self.counts = {w: n for w, n in counts.items() if len(w) >= 4}
+        self.vocabulary = set(self.counts)
+        self._choices = sorted(self.vocabulary | _GLOSSARY_ASCII)
 
     def correct(self, token: str) -> str | None:
         """Nearest known word for a likely typo, or None if the token is fine or unknowable."""
@@ -174,8 +183,18 @@ class QueryParser:
             return None
         if not self._choices:
             return None
-        match = process.extractOne(token, self._choices, scorer=fuzz.ratio, score_cutoff=80)
-        return match[0] if match and match[0] != token else None
+        candidates = process.extract(token, self._choices, scorer=fuzz.ratio, score_cutoff=80, limit=10)
+        if not candidates:
+            return None
+
+        # near-equal matches: prefer a legal-glossary word, then the commoner word ("dowery" is as
+        # close to "dower" as to "dowry"; a large corpus has both)
+        def rank(c: tuple) -> float:
+            word, score = c[0], c[1]
+            return score + (5 if word in _GLOSSARY_ASCII else 0) + 3 * math.log10(self.counts.get(word, 1))
+
+        best = max(candidates, key=rank)[0]
+        return best if best != token else None
 
     def parse(self, raw: str) -> ParsedQuery:
         text = normalise(raw)

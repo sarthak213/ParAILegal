@@ -23,7 +23,11 @@ GRID = {
     "case_name": [1.5, 3.0, 6.0],
     "bm25": [0.5, 0.75, 1.0, 1.5],
     "dense": [0.5, 1.0, 1.5, 2.0, 3.0],
-    "domain_boost": [0.0, 0.15, 0.3],
+    "domain_boost": [0.0],
+    "superseded": [1.0, 0.5, 0.3],
+    "authority": [0.0, 0.3, 0.5],
+    "regional": [1.0, 0.5, 0.3],
+    "constitution_route": [0.0, 0.5, 1.0],
 }
 
 

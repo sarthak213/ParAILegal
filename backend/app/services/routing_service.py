@@ -134,6 +134,14 @@ class QueryRouter:
         "fundamental right", "fundamental rights",
         "fundamental duty", "fundamental duties",
         "directive principle", "directive principles",
+        # v2 (892-Act corpus): plain constitutional vocabulary, so a question about an
+        # institution or a Schedule leans to the Constitution over an Act named after it
+        "constitution", "constitutional", "anti-defection", "defection", "special status",
+        "official language", "languages recognised", "advisory jurisdiction", "writ jurisdiction",
+        "proclamation of emergency", "financial emergency", "president's rule",
+        "amend the constitution", "amendment of the constitution", "uniform civil code",
+        "untouchability", "right to equality", "freedom of speech", "right to life",
+        "governor", "legislative council", "union territory", "panchayats", "municipalities",
         "dpsp",
         "habeas corpus", "mandamus", "certiorari", "quo warranto", "prohibition",
         "union list", "state list", "concurrent list",
