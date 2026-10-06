@@ -354,7 +354,12 @@ class SearchEngine:
         elif dense is not None:
             engine.dense = dense
         if use_pack and not callable(dense):
-            pack.write(pack_dir, settings, engine, dense_key)
+            try:
+                pack.write(pack_dir, settings, engine, dense_key)
+            except OSError as e:
+                # e.g. Windows: another running process (the app) has the old pack open. Search
+                # still works from the index just built; the pack is rewritten on a later start.
+                print(f"  Could not write the data pack ({e}); using the index built in memory.")
         return engine
 
     @staticmethod

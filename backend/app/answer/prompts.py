@@ -81,6 +81,24 @@ def messages(query: str, context: str, mode: str, outcome: str, read_as: str = "
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
 
 
+BRIEF_INSTRUCTION = (
+    "Write a case brief for an advocate, using only the facts and the numbered sources. Use these "
+    "'###' sections: 'Facts in brief' (three to five sentences); 'Offences' (for each offence, its "
+    "provision with [n], which elements the facts show and which are still open, following the "
+    "checklist); 'Points for the prosecution'; 'Points for the defence' (exceptions, provisos and "
+    "missing elements from the sources); 'Gaps to investigate' (facts that still need evidence). "
+    "Make clear these are arguments, not settled conclusions. About 300 to 450 words.")
+BRIEF_MAX_TOKENS = 1000
+
+
+def brief_messages(facts: str, context: str, checklist: str) -> list[dict]:
+    """The Case Builder's brief (app/case/builder.py): the facts take the question's place, and
+    the elements checklist the lawyer confirmed goes with the sources."""
+    user = (f"Sources:\n\n{context}\n\nElements checklist (from the facts):\n{checklist}\n\n"
+            f"Facts of the case:\n{facts}\n\n{BRIEF_INSTRUCTION}")
+    return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
+
+
 def lead(outcome: str) -> str:
     return CAVEAT_LEAD if outcome == CAVEAT else ""
 
