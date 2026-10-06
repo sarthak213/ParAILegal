@@ -18,6 +18,7 @@ from app.answer.gate import SOURCES_ONLY
 from app.answer.local import LocalAnswerer, finish
 from app.answer.pipeline import Prepared, prepare
 from app.answer.verify import citations, verify
+from app.case.schedule import Schedule
 from app.llm.server import LlamaServer
 from app.core.config import Settings
 
@@ -38,6 +39,8 @@ class SearchService:
             dense=self.settings.DENSE_MODEL or None, rerank=self.settings.RERANK_MODEL or None,
         )
         self.queryRouter = self.engine.router
+        # the BNSS First Schedule, for the Case Builder's procedure (read from the corpus)
+        self.schedule = Schedule.from_engine(self.engine)
         print(f"v2 search ready: {len(self.engine.chunks)} chunks.")
 
         s = self.settings

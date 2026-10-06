@@ -132,7 +132,8 @@ def remove_invalid_ids(answer: str, n_sources: int) -> tuple[str, list[int]]:
 
 def verify(answer: str, evidence: list[Evidence], question: str = "") -> tuple[str, Verification]:
     """The answer with invalid source numbers removed, and what the checks found. Provisions
-    named in the question are not counted as invented ("498A" in "498A ka case kya hota hai")."""
+    and figures named in the question are not counted as invented ("498A" in "498A ka case kya
+    hota hai"; the dates in a case brief's facts)."""
     fixed, bad = remove_invalid_ids(answer, len(evidence))
     v = Verification(invalid_ids=sorted(set(bad)))
     body = strip_code_written(fixed)
@@ -145,7 +146,8 @@ def verify(answer: str, evidence: list[Evidence], question: str = "") -> tuple[s
     source_text = "".join(f"\n{e.header}\n{e.relation}\n{e.text}" for e in evidence)
     v.unsupported_provisions = sorted({f"{k.title()} {n}" for k, n in mentions(body) if (k, n) not in known})
 
-    plain_source = source_text.replace(",", "")
+    # figures may come from the sources or from the question itself (dates in a case's facts)
+    plain_source = (source_text + "\n" + question).replace(",", "")
     # provision numbers were checked above; the rest are years, amounts and periods
     loose = _MENTION.sub(" ", _CITE.sub(" ", body))
     figures = {f for f in _FIGURE.findall(loose) if f.replace(",", "") not in plain_source}
