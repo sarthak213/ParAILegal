@@ -29,13 +29,26 @@ export interface AnswerResponse {
   sources: SourceChunk[]
 }
 
+/** The backend's check of a generated answer against its sources (app/answer/verify.py). */
+export interface Verification {
+  invalid_ids: number[]
+  unsupported_provisions: string[]
+  unsupported_figures: string[]
+  misattributed: string[]
+  uncited: string[]
+  claims: number
+  cited_sources: number[]
+  warning: string
+}
+
 // ── SSE Event Types ───────────────────────────────────────────────────
 
 export type SSEEvent =
   | { type: 'sources'; domain: string; sources: SourceChunk[] }
+  | { type: 'gate'; outcome: 'answer' | 'caveat' | 'sources_only'; reason: string; unknown: string[]; mode: string }
   | { type: 'token'; token: string }
-  | { type: 'status'; stage: 'thinking' }
-  | { type: 'done'; answer: string }
+  | { type: 'status'; stage: 'loading' | 'thinking' }
+  | { type: 'done'; answer: string; verification?: Verification }
   | { type: 'error'; detail: string }
 
 // ── History Types ─────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ const STATUS_LABELS: Record<BackendStatus, string> = {
   checking: 'Connecting…',
   ready:    'Ready',
   starting: 'Starting…',
+  failed:   'Failed to start (see backend log)',
   offline:  'Offline',
 }
 

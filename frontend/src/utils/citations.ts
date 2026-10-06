@@ -109,11 +109,49 @@ export function matchSource(citation: ParsedCitation, sources: SourceChunk[]): n
   return -1
 }
 
-/** Bracketed text in an answer that should become a citation chip. */
-const CITATION_RE = /(?<![\]!\\])\[([^[\]\n]{2,160})\](?![(:[])/g
+/**
+ * Bracketed text in an answer that should become a citation chip. Adjacent brackets are allowed
+ * ("[1][3]": the answer model writes them), so markdown reference links ("[x][y]") are not kept.
+ */
+const CITATION_RE = /(?<![!\\])\[([^[\]\n]{1,160})\](?![(:])/g
+
+/** "[1]", "[2, 3]": the v2 answer model cites its sources by number, in the order they were sent. */
+const SOURCE_NUMBERS_RE = /^\s*\d{1,2}(?:\s*[,;]\s*\d{1,2})*\s*$/
+
+export function isSourceNumbers(label: string): boolean {
+  return SOURCE_NUMBERS_RE.test(label)
+}
 
 function looksLikeCitation(label: string): boolean {
-  return /\b(?:section|sec\.?|s\.|article|art\.)\s*\d|\bBNSS?\b|\bBSA\b|\s(?:v\.?|vs\.?|versus)\s|\bAIR\b|\bSCC\b|source unspecified/i.test(label)
+  return isSourceNumbers(label)
+    || /\b(?:section|sec\.?|s\.|article|art\.)\s*\d|\bBNSS?\b|\bBSA\b|\s(?:v\.?|vs\.?|versus)\s|\bAIR\b|\bSCC\b|source unspecified/i.test(label)
+}
+
+/**
+ * A short label for a numbered source chip: "S. 103 BNS", "Art. 21", "S. 138 NI Act 1881",
+ * "Bachan Singh". Built from the source itself, so it is right whatever the model wrote.
+ */
+export function shortLabel(source: SourceChunk): string {
+  const first = (source.citation || source.hierarchy || '').split('\n')[0]
+  const head = first.split('—')[0].trim()
+  if (source.source_type === 'constitution') return head.replace(/^Article\s+/i, 'Art. ')
+  if (/judgement/i.test(source.source_type || '')) return first.split(/\s+v\.?\s+/i)[0].trim() || 'Judgment'
+  const section = head.replace(/^Section\s+/i, 'S. ')
+  const act = actOf(source) ?? shortActName(source.document_title || '')
+  return act ? `${section} ${act}` : section
+}
+
+/**
+ * A chip-sized Act name: short titles stay whole ("Code on Wages 2019"), longer ones become the
+ * initials of their capitalised words ("Payment and Settlement Systems Act, 2007" -> "PSSA 2007").
+ * The full title is in the chip's tooltip.
+ */
+function shortActName(title: string): string {
+  const t = title.replace(/^The\s+/i, '').replace(/,/g, '')
+  const year = t.match(/\b(1[89]\d\d|20\d\d)\b/)?.[1] ?? ''
+  const words = t.replace(/\b(1[89]\d\d|20\d\d)\b/, '').split(/\s+/).filter(Boolean)
+  const name = words.length <= 3 ? words.join(' ') : words.filter(w => /^[A-Z]/.test(w)).map(w => w[0]).join('')
+  return [name, year].filter(Boolean).join(' ')
 }
 
 /**

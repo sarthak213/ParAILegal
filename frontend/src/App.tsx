@@ -39,7 +39,7 @@ export default function App() {
   // ── Hooks ─────────────────────────────────────────────────────────
   const { entries, addEntry, removeEntry, clearAll } = useHistory()
   const { appState, stage, answer, sources, domain: streamDomain,
-          error, stream, cancel, reset } = useStream()
+          error, verification, followUp, stream, cancel, reset } = useStream()
   const backendStatus = useBackend()
 
   const isStreaming = appState === 'streaming'
@@ -60,6 +60,12 @@ export default function App() {
   const handleSubmit = useCallback(() => {
     if (!query.trim() || isStreaming) return
 
+    // The answer on screen, if any, goes along: the backend decides whether the new question
+    // follows it up ("is it bailable?") or starts fresh. "New Research" clears the screen.
+    const previous = shownQuery && shownState === 'done' && shownAnswer
+      ? { question: shownQuery, chunk_ids: shownSources.map(s => s.chunk_id).filter((id): id is string => !!id) }
+      : undefined
+
     // Reset stream state first — clears previous sources from the hook
     // This is critical when submitting from a history view, where
     // liveMode becomes true but stream.sources still holds old data
@@ -76,8 +82,8 @@ export default function App() {
     stream(query, mode, domain, (finalAnswer, finalSources, finalDomain) => {
       addEntry(query, query, finalAnswer, finalSources, finalDomain, mode)
       setQuery('')
-    })
-  }, [query, mode, domain, isStreaming, stream, reset, addEntry])
+    }, previous)
+  }, [query, mode, domain, isStreaming, stream, reset, addEntry, shownQuery, shownState, shownAnswer, shownSources])
 
   // ── Load history entry ────────────────────────────────────────────
   const handleSelectHistory = useCallback((entry: HistoryEntry) => {
@@ -172,6 +178,8 @@ export default function App() {
                 appState={shownState}
                 stage={stage}
                 error={shownError}
+                verification={liveMode ? verification : null}
+                followUp={liveMode ? followUp : ''}
                 onCitationClick={handleCitationClick}
               />
             )}

@@ -31,8 +31,10 @@ class BM25Index:
     def __init__(self, docs: list[dict[str, str]]) -> None:
         """docs: one dict per chunk with keys title, heading, body, aliases (row id = list position)."""
         self._db = sqlite3.connect(":memory:", check_same_thread=False)
+        # contentless (content=''): search needs only row ids and scores, never the stored text,
+        # so the index keeps no copy of it; a third of the size
         self._db.execute(
-            f"CREATE VIRTUAL TABLE chunks USING fts5(title, heading, body, aliases, tokenize='{TOKENIZER}')"
+            f"CREATE VIRTUAL TABLE chunks USING fts5(title, heading, body, aliases, content='', tokenize='{TOKENIZER}')"
         )
         self._db.executemany(
             "INSERT INTO chunks(rowid, title, heading, body, aliases) VALUES (?, ?, ?, ?, ?)",
@@ -41,6 +43,22 @@ class BM25Index:
         )
         self._db.commit()
         self.vocabulary = self._vocabulary(docs)
+
+    @classmethod
+    def open(cls, path: str, vocabulary: dict[str, int]) -> BM25Index:
+        """A prebuilt index from a data pack (app/search/pack.py), opened read-only."""
+        index = cls.__new__(cls)
+        index._db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+        index.vocabulary = vocabulary
+        return index
+
+    def save(self, path: str) -> None:
+        """Copy the index into a database file (the data pack's)."""
+        target = sqlite3.connect(path)
+        try:
+            self._db.backup(target)
+        finally:
+            target.close()
 
     @staticmethod
     def _vocabulary(docs: list[dict[str, str]]) -> dict[str, int]:

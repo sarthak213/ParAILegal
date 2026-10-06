@@ -14,6 +14,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from rapidfuzz import fuzz
@@ -67,6 +68,7 @@ class Components:
     routed: str
     wants_old: bool = False  # the query cites or names a replaced law
     text: str = ""           # the query, lower-cased (does it name a local Act's territory?)
+    dense_score: dict[int, float] = field(default_factory=dict)  # cosine of each dense hit
 
 
 SUPERSEDED = ("repealed", "omitted")
@@ -105,7 +107,9 @@ def _old_aliases() -> dict[str, list[str]]:
 
 class SearchEngine:
     def __init__(self, chunks: list[dict], dense: DenseSearch | None = None,
-                 router: Any = None, weights: Weights | None = None, reranker: Any = None) -> None:
+                 router: Any = None, weights: Weights | None = None, reranker: Any = None,
+                 bm25: BM25Index | None = None) -> None:
+        """bm25: a prebuilt keyword index (from the data pack); built from the chunks if None."""
         self.chunks = chunks
         self.dense = dense
         self.reranker = reranker
@@ -118,9 +122,10 @@ class SearchEngine:
         self._authority = [1.0 if c["_domain"] != "statutes" else float(c.get("authority") or 0.0)
                            for c in chunks]
         self._refs = [ref_of(c) for c in chunks]
-        aliases = _old_aliases()
-        docs = [self._index_doc(c, aliases) for c in chunks]
-        self.bm25 = BM25Index(docs)
+        if bm25 is None:
+            aliases = _old_aliases()
+            bm25 = BM25Index([self._index_doc(c, aliases) for c in chunks])
+        self.bm25 = bm25
         self.parser = QueryParser(self.bm25.vocabulary)
 
     # ── Index documents ────────────────────────────────────────────────
@@ -181,10 +186,12 @@ class SearchEngine:
         case_refs = dict.fromkeys(ref for key, ref in self.case_keys if fuzz.partial_ratio(key, low) >= 88)
         cases = [i for ref in case_refs for i in self.by_ref[ref]]
         bm = [i for i, _ in self.bm25.search(pq.keywords, limit=60, weights=self.weights.fields)]
-        dn = [i for i, _ in self.dense(pq.text, 60)] if self.dense is not None else []
+        dense_hits = self.dense(pq.text, 60) if self.dense is not None else []
+        dn = [i for i, _ in dense_hits]
         routed = domain or (self.router.route(pq.text) if self.router else "all")
         wants_old = any(c.via or c.act in OLD_CODES for c in pq.citations) or bool(_OLD_LAW.search(pq.text))
-        return Components(exact, uncertain, cases, bm, dn, routed, wants_old, pq.text.lower())
+        return Components(exact, uncertain, cases, bm, dn, routed, wants_old, pq.text.lower(),
+                          {i: s for i, s in dense_hits})
 
     def prior(self, i: int, comp: Components, weights: Weights) -> float:
         """How much a provision's standing, apart from its wording, should count for this query:
@@ -233,49 +240,132 @@ class SearchEngine:
                 break
         return out
 
-    def rerank(self, query: str, comp: Components, fused: list[tuple[int, float]], k: int) -> list[tuple[int, float]]:
-        """Re-order fused candidates with the cross-encoder. Provisions the user named stay first."""
+    def rerank(self, query: str, comp: Components, fused: list[tuple[int, float]], k: int
+               ) -> tuple[list[tuple[int, float]], dict[int, float]]:
+        """Re-order fused candidates with the cross-encoder. Provisions the user named stay first.
+        Also returns each re-ordered candidate's raw cross-encoder logit (before the priors):
+        how well its wording answers the question, which the answer gate reads."""
         pinned = [(i, s) for i, s in fused if i in set(comp.exact)]
         rest = [(i, s) for i, s in fused if i not in set(comp.exact)]
+        raw: dict[int, float] = {}
         if rest and self.reranker is not None:
             scores = self.reranker(query, [self.chunks[i]["_embed_text"] for i, _ in rest])
+            raw = {i: sc for (i, _), sc in zip(rest, scores, strict=True)}
             # the cross-encoder judges wording only; add the priors (as a log, since its scores
             # are logits) so it does not undo them: a local or repealed Act stays held back
             w = self.weights.rerank_prior
             rest = sorted(((i, sc + w * math.log(self.prior(i, comp, self.weights)))
                            for (i, _), sc in zip(rest, scores, strict=True)), key=lambda kv: -kv[1])
-        return (pinned + rest)[:k]
+        return (pinned + rest)[:k], raw
 
-    def search(self, query: str, k: int = 10, domain: str | None = None) -> list[dict]:
+    def search(self, query: str, k: int = 10, domain: str | None = None,
+               context_refs: list[str] | None = None) -> list[dict]:
+        """Ranked hits. Besides the chunk's fields, each hit carries the signals the answer gate
+        reads: `_exact` (the query named this provision), `_ce` (raw cross-encoder logit, None if
+        not reranked), `_bm25_rank` / `_dense_rank` (1-based rank in each retriever, or None) and
+        `_cos` (the best dense cosine among the query's dense hits: low for off-topic questions).
+
+        context_refs: provisions from the conversation so far (a follow-up question): added as
+        candidates with the weight of an uncertain citation, then ranked like any other."""
         comp = self.components(query, domain)
+        if context_refs:
+            comp.uncertain = comp.uncertain + [i for r in context_refs for i in self.by_ref.get(r, [])]
+        raw: dict[int, float] = {}
         if self.reranker is not None:
             pool = self.fuse(comp, self.weights, max(k, self.weights.rerank_top))
             # the reranker is English-only: give it typo-corrected text plus glossary translations
-            ranked = self.rerank(self.parser.parse(query).english, comp, pool, k)
+            ranked, raw = self.rerank(self.parser.parse(query).english, comp, pool, k)
         else:
             ranked = self.fuse(comp, self.weights, k)
+        bm25_rank = self._ref_ranks(comp.bm25)
+        dense_rank = self._ref_ranks(comp.dense)
+        exact = {self._refs[i] for i in comp.exact}
+        cos = round(max(comp.dense_score.values()), 4) if comp.dense_score else None
         out = []
         for rank, (i, score) in enumerate(ranked, start=1):
+            ref = self._refs[i]
             hit = {key: v for key, v in self.chunks[i].items() if not key.startswith("_")}
-            hit.update(_score=round(score, 6), _rank=rank, _ref=ref_of(self.chunks[i]))
+            hit.update(_score=round(score, 6), _rank=rank, _ref=ref, _exact=ref in exact,
+                       _ce=round(raw[i], 4) if i in raw else None,
+                       _bm25_rank=bm25_rank.get(ref), _dense_rank=dense_rank.get(ref), _cos=cos)
             out.append(hit)
         return out
+
+    def _ref_ranks(self, idxs: list[int]) -> dict[str, int]:
+        """Best 1-based rank of each provision in a retriever's list (its parts count as one)."""
+        ranks: dict[str, int] = {}
+        for rank, i in enumerate(idxs, start=1):
+            ranks.setdefault(self._refs[i], rank)
+        return ranks
+
+    def unknown_citations(self, query: str) -> list[str]:
+        """Provisions the query names with certainty that the corpus does not hold
+        ("BNS 999", "ART 512"): the answer says so instead of guessing."""
+        return [c.ref for c in self.parser.parse(query).citations if c.certain and c.ref not in self.by_ref]
+
+    def refs_of_chunks(self, chunk_ids: list[str]) -> list[str]:
+        """The provisions ("BNS 103") of chunks the client was shown, in order, without repeats."""
+        if not hasattr(self, "_ref_by_chunk_id"):
+            self._ref_by_chunk_id = {c.get("chunk_id"): r for c, r in zip(self.chunks, self._refs, strict=True)}
+        return list(dict.fromkeys(r for cid in chunk_ids if (r := self._ref_by_chunk_id.get(cid))))
+
+    def provision(self, ref: str) -> list[dict]:
+        """All chunks of one provision, in document order: the parts of a long section, an
+        Article's clauses, a judgment's paragraphs."""
+        return [self.chunks[i] for i in self.by_ref.get(ref, [])]
 
     # ── Construction ───────────────────────────────────────────────────
 
     @classmethod
     def from_corpus(cls, settings: Any = None, dense: DenseSearch | str | None = None,
-                    weights: Weights | None = None, rerank: str | None = None) -> SearchEngine:
-        """dense: a DenseSearch callable, or an embedder key from app.search.dense.SPECS."""
+                    weights: Weights | None = None, rerank: str | None = None,
+                    use_pack: bool = True) -> SearchEngine:
+        """dense: a DenseSearch callable, or an embedder key from app.search.dense.SPECS.
+
+        Loads the data pack (app/search/pack.py) when it is current; otherwise builds the index
+        from the corpus JSONL and writes the pack, so the next start is fast."""
         from app.core.config import settings as default_settings
+        from app.search import pack
+        from app.services.routing_service import QueryRouter
+
+        settings = settings or default_settings
+        reranker = None
+        if rerank:
+            from app.search.rerank import Reranker
+
+            reranker = Reranker(rerank)
+        dense_key = dense if isinstance(dense, str) else None
+        pack_dir = Path(settings.PACK_DIR)
+        loaded = pack.load(pack_dir, settings, dense_key) if use_pack and not callable(dense) else None
+        if loaded is not None:
+            if dense_key:
+                from app.search.dense import DenseIndex
+
+                dense = DenseIndex.from_vectors(dense_key, loaded.vectors, loaded.owner, len(loaded.chunks))
+            return cls(loaded.chunks, dense=dense, router=QueryRouter(settings), weights=weights,
+                       reranker=reranker, bm25=BM25Index.open(str(loaded.db_path), loaded.vocabulary))
+
+        engine = cls(cls.load_chunks(settings), dense=None, router=QueryRouter(settings), weights=weights,
+                     reranker=reranker)
+        if dense_key:
+            from app.search.dense import DenseIndex
+
+            engine.dense = DenseIndex(dense_key, [c["_embed_text"] for c in engine.chunks])
+        elif dense is not None:
+            engine.dense = dense
+        if use_pack and not callable(dense):
+            pack.write(pack_dir, settings, engine, dense_key)
+        return engine
+
+    @staticmethod
+    def load_chunks(settings: Any) -> list[dict]:
+        """Every chunk from the corpus JSONL, as the engine holds it (the slow path: ~1.5 s)."""
         from app.infrastructure.loaders.dataset_loader import (
             ConstitutionLoader,
             JudgementLoader,
             StatuteLoader,
         )
-        from app.services.routing_service import QueryRouter
 
-        settings = settings or default_settings
         chunks: list[dict] = []
         for loader, domain in ((ConstitutionLoader, "constitution"), (StatuteLoader, "statutes"),
                                (JudgementLoader, "judgements")):
@@ -288,13 +378,4 @@ class SearchEngine:
                 if domain == "statutes":
                     c["_act"] = c.get("act_code") or (c.get("chunk_id") or "").split("_")[0].upper()
                 chunks.append(c)
-        if isinstance(dense, str):
-            from app.search.dense import DenseIndex
-
-            dense = DenseIndex(dense, [c["_embed_text"] for c in chunks])
-        reranker = None
-        if rerank:
-            from app.search.rerank import Reranker
-
-            reranker = Reranker(rerank)
-        return cls(chunks, dense=dense, router=QueryRouter(settings), weights=weights, reranker=reranker)
+        return chunks

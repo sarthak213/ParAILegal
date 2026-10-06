@@ -319,11 +319,45 @@ QUESTIONS: dict[str, list[tuple[str, dict[str, int]]]] = {
         ("Which documents must be compulsorily registered?", {"registration_act_1908 17": E}),
         ("Conditions for terminating a pregnancy", {"medical_termination_of_pregnancy_act_1971 3": E}),
     ],
+    # Nothing in the corpus answers these: the answer gate should decline. Kinds are interleaved
+    # so the dev and test halves each get some of every kind.
     "no_answer": [
         ("What is the GST rate on restaurant food?", {}),  # rates are notified, not in the Act
         ("Who won the 2011 Cricket World Cup?", {}),
         ("What does the First Amendment to the US Constitution protect?", {}),
         ("What is the best recipe for biryani?", {}),
+        # provisions that do not exist
+        ("What does Section 999 of the BNS say?", {}),
+        ("Explain Article 512 of the Constitution", {}),
+        ("Section 620 of the BNSS", {}),
+        # foreign law
+        ("What is the punishment for murder under UK law?", {}),
+        ("How do I file for divorce in California?", {}),
+        ("What is the statute of limitations for fraud in New York?", {}),
+        ("Explain Miranda rights in the United States", {}),
+        ("What is the maximum GDPR fine for a data breach?", {}),
+        ("What is the minimum wage in Germany?", {}),
+        ("What is the penalty for jaywalking in Singapore?", {}),
+        ("How many paid vacation days do employees get in France?", {}),
+        ("How do I apply for a US green card?", {}),
+        # facts and figures that are not law
+        ("What is the current RBI repo rate?", {}),
+        ("Who is the current Chief Justice of India?", {}),
+        ("When is the next Lok Sabha election?", {}),
+        ("What is the price of petrol in Delhi today?", {}),
+        ("What is the visa fee for an Indian tourist going to Thailand?", {}),
+        # cases not in the corpus
+        ("What did the Supreme Court decide in the Ayodhya Ram Janmabhoomi case?", {}),
+        ("What did the court decide in the Aarushi Talwar case?", {}),
+        # local rules not in the corpus
+        ("What are the parking rules in Bengaluru?", {}),
+        ("What are the bar timings in Mumbai?", {}),
+        # not legal
+        ("What is the capital of Australia?", {}),
+        ("How do I reset my Gmail password?", {}),
+        ("Explain photosynthesis", {}),
+        ("What is the boiling point of water at sea level?", {}),
+        ("Recommend a good laptop under 50000 rupees", {}),
     ],
 }
 

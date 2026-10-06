@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback } from 'react'
-import type { SourceChunk, AppState, QueryMode } from '../types'
+import type { SourceChunk, AppState, QueryMode, Verification } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 /** What the pipeline is doing before the first answer token arrives. */
-export type StreamStage = 'searching' | 'reading' | 'thinking' | 'writing'
+export type StreamStage = 'searching' | 'reading' | 'loading' | 'thinking' | 'writing'
 
 interface StreamState {
   appState: AppState
@@ -13,9 +13,21 @@ interface StreamState {
   sources: SourceChunk[]
   domain: string
   error: string
+  verification: Verification | null  // the backend's check of the finished answer
+  followUp: string                   // the earlier question this one was read as following up, or ''
 }
 
-const INITIAL: StreamState = { appState: 'idle', stage: 'searching', answer: '', sources: [], domain: '', error: '' }
+/** The question answered just before and the sources shown with it; the backend decides
+ *  whether the new question follows it up ("is it bailable?") or starts fresh. */
+export interface PreviousTurn {
+  question: string
+  chunk_ids: string[]
+}
+
+const INITIAL: StreamState = {
+  appState: 'idle', stage: 'searching', answer: '', sources: [], domain: '', error: '', verification: null,
+  followUp: '',
+}
 
 export function useStream() {
   const [state, setState] = useState<StreamState>(INITIAL)
@@ -27,6 +39,7 @@ export function useStream() {
     mode: QueryMode,
     domain: string,
     onDone: (answer: string, sources: SourceChunk[], domain: string) => void,
+    previous?: PreviousTurn,
   ) => {
     // Cancel any in-flight request
     abortRef.current?.abort()
@@ -47,7 +60,7 @@ export function useStream() {
       const response = await fetch(`${API_BASE}/api/v1/answer/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, domain: domain || null }),
+        body: JSON.stringify({ query, domain: domain || null, previous: previous ?? null }),
         signal: abortRef.current.signal,
       })
 
@@ -79,9 +92,15 @@ export function useStream() {
             finalSources = (event.sources as SourceChunk[]) ?? []
             finalDomain = (event.domain as string) ?? ''
             setState(s => ({ ...s, stage: 'reading', sources: finalSources, domain: finalDomain }))
+          } else if (event.type === 'gate') {
+            const followUp = (event.follow_up as string | undefined) ?? ''
+            setState(s => ({ ...s, followUp }))
           } else if (event.type === 'status') {
-            // A reasoning model is thinking before it writes (can take 15-30 s)
-            if (event.stage === 'thinking') setState(s => ({ ...s, stage: 'thinking' }))
+            // the local answer model is loading (first question), or a reasoning model is thinking
+            if (event.stage === 'loading' || event.stage === 'thinking') {
+              const stage = event.stage as StreamStage
+              setState(s => ({ ...s, stage }))
+            }
           } else if (event.type === 'token') {
             assembledTokens += (event.token as string) ?? ''
             // Strip disclaimer for streaming display
@@ -90,7 +109,8 @@ export function useStream() {
           } else if (event.type === 'done') {
             const full = (event.answer as string) ?? assembledTokens
             const display = full.replace(/\n\n⚖.*$/s, '').replace(/⚖.*$/s, '').trimEnd()
-            setState(s => ({ ...s, appState: 'done', answer: display }))
+            const verification = (event.verification as Verification | undefined) ?? null
+            setState(s => ({ ...s, appState: 'done', answer: display, verification }))
             onDone(display, finalSources, finalDomain)
             return
           } else if (event.type === 'error') {

@@ -2,9 +2,11 @@ import { memo, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, FileText, Share2, Check } from 'lucide-react'
-import type { SourceChunk, QueryMode, AppState } from '../../types'
+import type { SourceChunk, QueryMode, AppState, Verification } from '../../types'
 import type { StreamStage } from '../../hooks/useStream'
-import { linkCitations, matchSource, parseCitation } from '../../utils/citations'
+import {
+  formatLegalCitation, isSourceNumbers, linkCitations, matchSource, parseCitation, shortLabel,
+} from '../../utils/citations'
 import { copyToClipboard, exportToPDF } from '../../utils/export'
 
 interface Props {
@@ -16,30 +18,46 @@ interface Props {
   appState: AppState
   stage: StreamStage
   error: string
+  verification?: Verification | null
+  followUp?: string  // the earlier question this one was read as following up
   onCitationClick: (sourceIndex: number) => void
 }
 
 /**
  * One citation chip. A citation that matches a retrieved source links to it; one that matches
- * nothing is flagged, because the model cited something it was not given.
+ * nothing is flagged, because the model cited something it was not given. "[2]" is the second
+ * source sent with the answer (v2); a written citation ("[Section 103, BNS]", v1) is matched by
+ * its fields.
  */
 function CitationChip({ label, sources, onClick }: {
   label: string
   sources: SourceChunk[]
   onClick: (sourceIndex: number) => void
 }) {
-  const parsed = parseCitation(label)
-  const index = matchSource(parsed, sources)
-  const verified = index >= 0
+  const numbered = isSourceNumbers(label)
+  const index = numbered ? Number(label) - 1 : matchSource(parseCitation(label), sources)
+  const source = index >= 0 ? sources[index] : undefined
   return (
     <button
       type="button"
-      className={`citation-chip${verified ? '' : ' citation-chip--unverified'}`}
-      title={verified ? 'Show this source' : 'Not among the retrieved sources: verify this citation independently'}
-      onClick={() => verified && onClick(index)}
+      className={`citation-chip${source ? '' : ' citation-chip--unverified'}`}
+      title={source
+        ? `${formatLegalCitation(source)}: show this source`
+        : 'Not among the retrieved sources: verify this citation independently'}
+      onClick={() => source && onClick(index)}
     >
-      {label}
+      {numbered && source ? shortLabel(source) : label}
     </button>
+  )
+}
+
+/** The verifier's warning under an answer: provisions or figures it could not find in the sources. */
+function VerificationNote({ verification }: { verification: Verification }) {
+  if (!verification.warning) return null
+  return (
+    <div className="verify-note" role="note">
+      <strong>Check this answer.</strong> {verification.warning}
+    </div>
   )
 }
 
@@ -52,8 +70,8 @@ const AnswerMarkdown = memo(function AnswerMarkdown({ markdown, sources, onCitat
     a({ href, children, ...props }) {
       if (href === '#cite') {
         const label = String(Array.isArray(children) ? children.join('') : children ?? '')
-        // "[Section 103, BNS; Section 101, BNS]" becomes one chip per citation
-        const parts = label.split(';').map(p => p.trim()).filter(Boolean)
+        // "[Section 103, BNS; Section 101, BNS]" and "[1, 2]" become one chip per citation
+        const parts = label.split(isSourceNumbers(label) ? /[;,]/ : ';').map(p => p.trim()).filter(Boolean)
         return (
           <span className="citation-group">
             {parts.map((part, i) => (
@@ -79,6 +97,7 @@ const AnswerMarkdown = memo(function AnswerMarkdown({ markdown, sources, onCitat
 const STAGE_LABEL: Record<StreamStage, string> = {
   searching: 'Searching the legal corpus…',
   reading: 'Reading the retrieved provisions…',
+  loading: 'Loading the answer model (first question only)…',
   thinking: 'Reasoning over the provisions…',
   writing: 'Writing the answer…',
 }
@@ -92,6 +111,8 @@ export function AnswerView({
   appState,
   stage,
   error,
+  verification,
+  followUp,
   onCitationClick,
 }: Props) {
   const [copied, setCopied] = useState(false)
@@ -127,6 +148,11 @@ export function AnswerView({
 
       {/* Query header */}
       <div className="answer-view__header">
+        {followUp && (
+          <div className="follow-up-note" title="Searched together with the earlier question. Use New Research to start fresh.">
+            Follow-up to: <span>{followUp}</span>
+          </div>
+        )}
         <h1 className="answer-view__query">{query}</h1>
         <div className="answer-view__meta">
           {domain && <span className="domain-badge">{domain.toUpperCase()}</span>}
@@ -173,6 +199,8 @@ export function AnswerView({
           <AnswerMarkdown markdown={answer} sources={sources} onCitationClick={onCitationClick} />
         </div>
       )}
+
+      {isDone && verification && <VerificationNote verification={verification} />}
 
       {/* Disclaimer */}
       {(isDone || (isStreaming && answer)) && (

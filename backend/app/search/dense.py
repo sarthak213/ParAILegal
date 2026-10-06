@@ -51,12 +51,7 @@ def windows(text: str, size: int, stride_ratio: float = 0.8) -> list[str]:
 
 class DenseIndex:
     def __init__(self, key: str, documents: list[str], batch_size: int = 16, threads: int | None = None) -> None:
-        from fastembed import TextEmbedding
-
-        self.spec = SPECS[key]
-        # 4 threads by default: fast enough, and leaves the laptop usable (EMBED_THREADS overrides)
-        threads = threads or int(os.environ.get("EMBED_THREADS", "4"))
-        self.model = TextEmbedding(self.spec.name, cache_dir=str(MODELS_DIR / "fastembed"), threads=threads)
+        self._load_model(key, threads)
         pieces: list[str] = []
         owner: list[int] = []
         for i, doc in enumerate(documents):
@@ -66,6 +61,24 @@ class DenseIndex:
         self.owner = np.array(owner)
         self.n_docs = len(documents)
         self.vectors = self._load_or_embed(key, pieces, batch_size)
+
+    def _load_model(self, key: str, threads: int | None) -> None:
+        from fastembed import TextEmbedding
+
+        self.key, self.spec = key, SPECS[key]
+        # 4 threads by default: fast enough, and leaves the laptop usable (EMBED_THREADS overrides)
+        threads = threads or int(os.environ.get("EMBED_THREADS", "4"))
+        self.model = TextEmbedding(self.spec.name, cache_dir=str(MODELS_DIR / "fastembed"), threads=threads)
+
+    @classmethod
+    def from_vectors(cls, key: str, vectors: np.ndarray, owner: np.ndarray, n_docs: int,
+                     threads: int | None = None) -> DenseIndex:
+        """An index from a data pack's vectors (app/search/pack.py): nothing is split or hashed."""
+        index = cls.__new__(cls)
+        index._load_model(key, threads)
+        index.vectors = np.ascontiguousarray(vectors, dtype=np.float32)
+        index.owner, index.n_docs = owner, n_docs
+        return index
 
     def _load_or_embed(self, key: str, pieces: list[str], batch_size: int) -> np.ndarray:
         """Vectors for the pieces, cached per piece (by the hash of its text), so a corpus edit

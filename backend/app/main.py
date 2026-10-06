@@ -43,13 +43,22 @@ async def ready():
 
     if not app.state.ready:
 
+        if app.state.error:
+            return {
+                "status": "failed",
+                "error": app.state.error,
+            }
+
         return {
             "status": "starting"
         }
 
     rag = app.state.rag_system
 
-    return {
+    out = {
         "status": "ready",
         "indices": rag.index_stats(),
     }
+    if hasattr(rag, "model_status"):
+        out["model"] = rag.model_status()
+    return out

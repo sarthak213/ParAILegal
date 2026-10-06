@@ -41,6 +41,7 @@ request.is_disconnected() on each token — if True, we break early.
 """
 
 import json
+import logging
 import httpx
 import asyncio
 from typing import AsyncIterator
@@ -48,10 +49,17 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.answer.followup import Previous
+from app.answer.gate import SOURCES_ONLY
+from app.answer.local import finish
+from app.answer.verify import citations, verify
+from app.answer.sources_only import sources_only_answer
 from app.api.deps import get_rag_system
 from app.schemas.requests import AnswerRequest
 from app.schemas.responses import AnswerResponse, SourceChunk
 
+
+logger = logging.getLogger("parai-legal")
 
 router = APIRouter(
     prefix="/api/v1/answer",
@@ -111,13 +119,19 @@ async def answer(
     request: AnswerRequest,
     rag=Depends(get_rag_system),
 ) -> AnswerResponse:
-    result = await rag.answer(request.query, request.domain)
+    if hasattr(rag, "prepare"):  # v2
+        result = await rag.answer(request.query, request.domain, request.mode, _previous(request))
+    else:
+        result = await rag.answer(request.query, request.domain)
 
     return AnswerResponse(
         query=result["query"],
         domain=result["domain"],
         answer=result["answer"],
         sources=[_to_source_chunk(s) for s in result["sources"]],
+        gate=result.get("gate"),
+        citations=result.get("citations"),
+        verification=result.get("verification"),
     )
 
 
@@ -141,7 +155,8 @@ async def answer_stream(
     rag=Depends(get_rag_system),
 ) -> StreamingResponse:
     return StreamingResponse(
-        _stream_answer(rag, body.query, body.domain, request),
+        _stream_v2(rag, body.query, body.domain, body.mode, _previous(body), request) if hasattr(rag, "prepare")
+        else _stream_answer(rag, body.query, body.domain, request),
         media_type="text/event-stream",
         headers={
             # Prevent proxies and browsers from buffering SSE
@@ -229,15 +244,7 @@ async def _stream_answer(
 
     if not top:
         heartbeat_task.cancel()
-        yield _sse({
-            "type":   "done",
-            "answer": (
-                "No relevant provisions were retrieved for this query. "
-                "Please try rephrasing or narrowing the question.\n\n"
-                "⚖ This is a research tool. Verify all provisions against "
-                "the official Gazette. This is not legal advice."
-            ),
-        })
+        yield _sse({"type": "done", "answer": sources_only_answer(top)})
         return
 
     # ── Step 2: Build context and stream Sarvam ───────────────────────
@@ -376,3 +383,64 @@ async def _stream_answer(
         full_answer = full_answer.rstrip() + "\n\n" + disclaimer
 
     yield _sse({"type": "done", "answer": full_answer})
+
+
+# ── v2: local search, gate, evidence and answer model ─────────────────
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _previous(body: AnswerRequest) -> Previous | None:
+    p = body.previous
+    return Previous(p.question, p.chunk_ids) if p and p.question.strip() else None
+
+
+async def _stream_v2(rag, query: str, domain: str | None, mode: str | None, previous: Previous | None,
+                     request: Request) -> AsyncIterator[str]:
+    """Events: sources, gate, [status: loading], token..., done (or error).
+
+    `gate` says how the question was handled: outcome, reason, provisions the corpus lacks, the
+    mode, and `follow_up`: the earlier question it was read as following up, or "".
+
+    `done` carries the final answer (source numbers that point nowhere removed), `citations`
+    (what each [n] refers to: [n] is the n-th source sent in `sources`) and `verification`
+    (app/answer/verify.py).
+
+    Everything runs on this machine, so the v1 proxy keepalive is not needed. When the gate
+    declines, or no answer model is installed, the answer is written by code (`fallback`)."""
+    try:
+        p = await asyncio.to_thread(rag.prepare, query, mode, previous)
+    except Exception as e:
+        yield _sse({"type": "error", "detail": f"Search failed: {e}"})
+        return
+    yield _sse({
+        "type":    "sources",
+        "domain":  domain or rag.queryRouter.route(p.question),
+        "sources": [_to_source_chunk(s).model_dump(exclude_none=True) for s in p.sources],
+    })
+    yield _sse({"type": "gate", "outcome": p.outcome, "reason": p.reason, "unknown": p.unknown,
+                "mode": p.mode, "follow_up": p.earlier})
+
+    if p.outcome == SOURCES_ONLY or rag.answerer is None:
+        yield _sse({"type": "done", "answer": p.fallback, "citations": citations(p.evidence)})
+        return
+
+    if not rag.answerer.ready:
+        yield _sse({"type": "status", "stage": "loading"})  # first answer: the model is loading
+    pieces: list[str] = []
+    try:
+        async for text in rag.answerer.stream(p):
+            if await request.is_disconnected():
+                return  # the user closed the tab or asked something else: stop generating
+            pieces.append(text)
+            yield _sse({"type": "token", "token": text})
+    except Exception as e:
+        yield _sse({"type": "error", "detail": f"{e}. The matching provisions are listed in the sources."})
+        return
+    # the verifier: drops [n] that point nowhere, flags provisions and figures not in the sources
+    fixed, v = verify("".join(pieces), p.evidence, p.question)
+    if v.warning or v.invalid_ids:
+        logger.warning("Verifier on %r: %s", p.question, v.to_dict())
+    yield _sse({"type": "done", "answer": finish(fixed), "citations": citations(p.evidence),
+                "verification": v.to_dict()})

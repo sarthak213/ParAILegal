@@ -38,6 +38,10 @@ class AnswerResponse(BaseModel):
     domain:  str
     answer:  str
     sources: list[SourceChunk]
+    # v2 only
+    gate:         dict[str, Any] | None = None        # outcome, reason, unknown provisions
+    citations:    list[dict[str, Any]] | None = None  # what each [n] in the answer refers to
+    verification: dict[str, Any] | None = None        # app/answer/verify.py
 
 
 class HealthResponse(BaseModel):
