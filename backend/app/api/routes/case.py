@@ -40,6 +40,8 @@ class FactsRequest(BaseModel):
 class OffencesRequest(FactsRequest):
     # the structured facts' "acts" (from /facts, as the lawyer edited them); better queries than the narrative
     acts: list[str] = Field(default_factory=list, max_length=20)
+    # sections the lawyer added by number ("BNS 85"), listed first
+    include: list[str] = Field(default_factory=list, max_length=6)
 
 
 class ElementsRequest(FactsRequest):
@@ -93,7 +95,8 @@ async def facts(body: FactsRequest, rag=Depends(get_rag_system)) -> dict:
 @router.post("/offences", summary="Candidate offences for the facts")
 async def offences(body: OffencesRequest, rag=Depends(get_rag_system)) -> dict:
     rag = _v2(rag)
-    found = await asyncio.to_thread(builder.offences, body.facts, rag.engine, rag.schedule, body.acts)
+    found = await asyncio.to_thread(builder.offences, body.facts, rag.engine, rag.schedule, body.acts,
+                                    include=body.include)
     return {"offences": found}
 
 

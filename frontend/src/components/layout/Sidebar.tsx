@@ -1,4 +1,4 @@
-import { MessageSquare, Plus, Trash2, Clock } from 'lucide-react'
+import { MessageSquare, Plus, Trash2, Clock, Search, Briefcase } from 'lucide-react'
 import type { HistoryEntry } from '../../types'
 import { formatRelativeTime } from '../../utils/citations'
 import type { BackendStatus } from '../../hooks/useBackend'
@@ -11,7 +11,11 @@ interface Props {
   onDelete: (id: string) => void
   onClear: () => void
   onNew: () => void
+  view: View
+  onView: (view: View) => void
 }
+
+export type View = 'research' | 'case'
 
 const STATUS_LABELS: Record<BackendStatus, string> = {
   checking: 'Connecting…',
@@ -23,17 +27,31 @@ const STATUS_LABELS: Record<BackendStatus, string> = {
 
 export function Sidebar({
   entries, activeId, status,
-  onSelect, onDelete, onClear, onNew,
+  onSelect, onDelete, onClear, onNew, view, onView,
 }: Props) {
   return (
     <aside className="sidebar">
       {/* Logo */}
       <div className="sidebar__header">
         <img src="/logo.png" alt="ParAILegal" style={{ width: '100%', maxWidth: '270px', marginBottom: '0px' , objectFit: 'contain'   }} />
-        <button className="sidebar__new-btn" onClick={onNew}>
-          <Plus size={14} />
-          New Research
-        </button>
+        <div className="view-switch" role="tablist">
+          <button role="tab" aria-selected={view === 'research'}
+            className={`view-switch__btn${view === 'research' ? ' view-switch__btn--on' : ''}`}
+            onClick={() => onView('research')}>
+            <Search size={13} /> Research
+          </button>
+          <button role="tab" aria-selected={view === 'case'}
+            className={`view-switch__btn${view === 'case' ? ' view-switch__btn--on' : ''}`}
+            onClick={() => onView('case')}>
+            <Briefcase size={13} /> Case Builder
+          </button>
+        </div>
+        {view === 'research' && (
+          <button className="sidebar__new-btn" onClick={onNew}>
+            <Plus size={14} />
+            New Research
+          </button>
+        )}
       </div>
 
       {/* Status */}

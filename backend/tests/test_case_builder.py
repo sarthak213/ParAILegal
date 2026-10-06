@@ -77,3 +77,23 @@ def test_procedure_table_and_checklist_text():
     assert "| BNS 351(2) | Criminal intimidation | Imprisonment for 2 years, or fine, or both | Non-cognizable | Bailable | Any Magistrate |" in table
     text = builder.checklist_text({"BNS 351": [dict(check("element", builder.SHOWN), label="A threat", fact="finish her")]})
     assert text.startswith("Criminal intimidation (BNS 351): met") and '"finish her"' in text
+
+
+def test_acts_the_facts_do_not_bear_out_are_dropped(monkeypatch):
+    facts = ("Meena married Rakesh in March 2021. From the start Rakesh and his mother demanded a car and Rs. 5 lakh "
+             "from Meena's parents, and beat her when the money was not paid. On 14 February 2023 she died of burns.")
+    acts = ["Rakesh demanded a car and Rs. 5 lakh from Meena's parents", "Rakesh beat Meena when the money was not paid",
+            "the husband and his mother demanded money as dowry",
+            "Rakesh threatened by message to kill his wife unless money was paid"]  # copied from a prompt example
+
+    async def fake(*_a, **_k):
+        return {"parties": [], "events": [], "harm": [], "property": [], "documents": [], "acts": acts}
+    monkeypatch.setattr(builder, "complete_json", fake)
+    out = run(builder.structure_facts(facts, "http://model"))
+    assert out["acts"] == acts[:3] and out["acts_dropped"] == acts[3:]
+
+
+def test_an_offence_added_by_number_comes_first():
+    found = builder.offences("facts", Engine(), SCHEDULE, acts=["the husband sent a threat"], include=["BNS 85"])
+    assert found[0]["ref"] == "BNS 85" and found[0]["added"] and found[0]["has_checklist"]
+    assert [o["ref"] for o in found].count("BNS 85") == 1 and not found[1]["added"]
