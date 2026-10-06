@@ -137,12 +137,12 @@ async def run_model(model: Path, name: str, prepared: list[tuple[dict, object]])
                 continue
             result, pieces, first = ChatResult(), [], None
             start = time.monotonic()
-            async for text in stream_chat(server.base_url, prompts.messages(p.question, p.context, p.mode, p.outcome, p.read_as),
+            async for text in stream_chat(server.base_url, prompts.messages(p.question, p.context, p.mode, p.outcome, p.read_as, p.earlier),
                                           prompts.MODES[p.mode].max_tokens, settings.TEMPERATURE_ANSWER, result):
                 first = first if first is not None else time.monotonic() - start
                 pieces.append(text)
             total = time.monotonic() - start
-            answer = prompts.lead(p.outcome) + "".join(pieces) + prompts.tail(p.mode)
+            answer = p.notice + prompts.lead(p.outcome) + "".join(pieces) + prompts.tail(p.mode)
             row.update(answer=answer, first_token_s=round(first or total, 2), total_s=round(total, 2),
                        prompt_tokens=result.prompt_tokens, answer_tokens=result.completion_tokens,
                        finish=result.finish_reason, **score(q, p, answer))

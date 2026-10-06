@@ -258,12 +258,18 @@ class SearchEngine:
                            for (i, _), sc in zip(rest, scores, strict=True)), key=lambda kv: -kv[1])
         return (pinned + rest)[:k], raw
 
-    def search(self, query: str, k: int = 10, domain: str | None = None) -> list[dict]:
+    def search(self, query: str, k: int = 10, domain: str | None = None,
+               context_refs: list[str] | None = None) -> list[dict]:
         """Ranked hits. Besides the chunk's fields, each hit carries the signals the answer gate
         reads: `_exact` (the query named this provision), `_ce` (raw cross-encoder logit, None if
         not reranked), `_bm25_rank` / `_dense_rank` (1-based rank in each retriever, or None) and
-        `_cos` (the best dense cosine among the query's dense hits: low for off-topic questions)."""
+        `_cos` (the best dense cosine among the query's dense hits: low for off-topic questions).
+
+        context_refs: provisions from the conversation so far (a follow-up question): added as
+        candidates with the weight of an uncertain citation, then ranked like any other."""
         comp = self.components(query, domain)
+        if context_refs:
+            comp.uncertain = comp.uncertain + [i for r in context_refs for i in self.by_ref.get(r, [])]
         raw: dict[int, float] = {}
         if self.reranker is not None:
             pool = self.fuse(comp, self.weights, max(k, self.weights.rerank_top))
@@ -296,6 +302,12 @@ class SearchEngine:
         """Provisions the query names with certainty that the corpus does not hold
         ("BNS 999", "ART 512"): the answer says so instead of guessing."""
         return [c.ref for c in self.parser.parse(query).citations if c.certain and c.ref not in self.by_ref]
+
+    def refs_of_chunks(self, chunk_ids: list[str]) -> list[str]:
+        """The provisions ("BNS 103") of chunks the client was shown, in order, without repeats."""
+        if not hasattr(self, "_ref_by_chunk_id"):
+            self._ref_by_chunk_id = {c.get("chunk_id"): r for c, r in zip(self.chunks, self._refs, strict=True)}
+        return list(dict.fromkeys(r for cid in chunk_ids if (r := self._ref_by_chunk_id.get(cid))))
 
     def provision(self, ref: str) -> list[dict]:
         """All chunks of one provision, in document order: the parts of a long section, an

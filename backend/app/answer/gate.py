@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, field
 
 ANSWER, CAVEAT, SOURCES_ONLY = "answer", "caveat", "sources_only"
+NO_CLEAR_MATCH = "no provision clearly matches the question"
 EVIDENCE_HITS = 5  # top hits by rank given to the answer model: 92% of essential provisions
 # ... minus any hit this many logits below the best one: drops the long tail (a "presumption as
 # to foreign law" section in a cheque-bounce answer) at a cost of 0.8 points of essential
@@ -93,7 +94,7 @@ def decide(query: str, hits: list[dict], unknown: list[str] | None = None,
         return Decision(CAVEAT, evidence, "relevance not scored")
     evidence = [h for h in evidence if h.get("_ce") is None or h["_ce"] >= top - EVIDENCE_MARGIN]
     if top < t.low and (cos is None or cos < t.cos_low):
-        return Decision(SOURCES_ONLY, [], "no provision clearly matches the question")
+        return Decision(SOURCES_ONLY, [], NO_CLEAR_MATCH)
     if top >= t.high:
         return Decision(ANSWER, evidence, "a provision clearly matches")
     return Decision(CAVEAT, evidence, "the closest provisions may not cover the exact question")

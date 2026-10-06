@@ -13,6 +13,7 @@ import asyncio
 from collections import Counter
 from typing import Any
 
+from app.answer.followup import Previous
 from app.answer.gate import SOURCES_ONLY
 from app.answer.local import LocalAnswerer, finish
 from app.answer.pipeline import Prepared, prepare
@@ -73,12 +74,13 @@ class SearchService:
             h["_rrf_score"] = h["_score"]
         return hits
 
-    def prepare(self, query: str, mode: str | None = None) -> Prepared:
+    def prepare(self, query: str, mode: str | None = None, previous: Previous | None = None) -> Prepared:
         """Search, gate and evidence for an answer (app/answer/pipeline.py). Synchronous."""
-        return prepare(query, self.engine, self.settings.TOP_K_SEARCH, mode)
+        return prepare(query, self.engine, self.settings.TOP_K_SEARCH, mode, previous)
 
-    async def answer(self, query: str, domain: str | None = None, mode: str | None = None) -> dict[str, Any]:
-        p = await asyncio.to_thread(self.prepare, query, mode)
+    async def answer(self, query: str, domain: str | None = None, mode: str | None = None,
+                     previous: Previous | None = None) -> dict[str, Any]:
+        p = await asyncio.to_thread(self.prepare, query, mode, previous)
         verification = None
         if p.outcome == SOURCES_ONLY or self.answerer is None:
             answer = p.fallback
@@ -90,7 +92,7 @@ class SearchService:
             "domain": domain or self.queryRouter.route(query),
             "sources": p.sources,
             "answer": answer,
-            "gate": {"outcome": p.outcome, "reason": p.reason, "unknown": p.unknown},
+            "gate": {"outcome": p.outcome, "reason": p.reason, "unknown": p.unknown, "follow_up": p.earlier},
             "citations": citations(p.evidence),
             "verification": verification,
         }

@@ -14,13 +14,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.answer import urgent
 from app.answer.evidence import Evidence, assemble, render
-from app.answer.gate import CAVEAT, SOURCES_ONLY, decide
+from app.answer.followup import Previous, is_follow_up
+from app.answer.gate import CAVEAT, EVIDENCE_HITS, NO_CLEAR_MATCH, SOURCES_ONLY, Decision, decide
 from app.answer.prompts import RESEARCH, mode_of
 from app.answer.sources_only import DEFAULT_LEAD, sources_only_answer
 from app.search.query import strip_mode
 
 NEAREST = 5  # provisions listed when the gate declines for lack of a clear match
+FOLLOW_UP_REFS = 3  # provisions of the earlier answer kept in the running for a follow-up
 
 
 @dataclass
@@ -36,6 +39,8 @@ class Prepared:
     mode: str = RESEARCH
     question: str = ""  # the query without its mode prefix ("ADVOCATE: ...")
     read_as: str = ""   # the question in legal terms when that differs (typos fixed, glossary)
+    earlier: str = ""   # the question this one follows up, if it is a follow-up
+    notice: str = ""    # urgent-help notices to show above the answer (app/answer/urgent.py)
 
 
 def readable_ref(ref: str) -> str:
@@ -62,21 +67,35 @@ def lead(outcome: str, reason: str, unknown: list[str]) -> str:
     return DEFAULT_LEAD
 
 
-def prepare(query: str, engine: Any, k: int, mode: str | None = None) -> Prepared:
-    """mode: research / summarise / advocate; if None, read from a "SUMMARISE: ..." prefix."""
+def prepare(query: str, engine: Any, k: int, mode: str | None = None,
+            previous: Previous | None = None) -> Prepared:
+    """mode: research / summarise / advocate; if None, read from a "SUMMARISE: ..." prefix.
+    previous: the question answered just before, and the sources shown with it (app/answer/followup.py)."""
     prefix, question = strip_mode(query)
     mode = mode_of(mode or prefix)
-    hits = engine.search(query, k=k)
+    parsed = engine.parse(question)
+    earlier = strip_mode(previous.question)[1].strip() if previous else ""
+    if earlier and is_follow_up(question, bool(parsed.citations)):
+        # search reads both questions, and the earlier answer's provisions stay in the running
+        hits = engine.search(f"{earlier} {question}", k=k,
+                             context_refs=engine.refs_of_chunks(previous.chunk_ids)[:FOLLOW_UP_REFS])
+    else:
+        earlier = ""
+        hits = engine.search(query, k=k)
     unknown = engine.unknown_citations(query)
-    english = engine.parse(question).english
-    read_as = english if english.lower() != question.lower() else ""
+    read_as = parsed.english if parsed.english.lower() != question.lower() else ""
+    notice = urgent.block(question)
     d = decide(question, hits, unknown)
+    if notice and d.outcome == SOURCES_ONLY and d.reason == NO_CLEAR_MATCH and hits:
+        # someone in trouble now, asking in their own words: answer from the nearest provisions
+        # with the caveat rather than decline (lay wording scores low with the reranker)
+        d = Decision(CAVEAT, hits[:EVIDENCE_HITS], "urgent: answering from the nearest provisions")
+    common = dict(unknown=d.unknown, mode=mode, question=question, read_as=read_as, earlier=earlier, notice=notice)
     if d.outcome == SOURCES_ONLY:
         nearest = [] if (d.unknown or "another country" in d.reason or not hits) else hits[:NEAREST]
-        return Prepared(query, d.outcome, d.reason, nearest, unknown=d.unknown, mode=mode, question=question,
-                        read_as=read_as, fallback=sources_only_answer(nearest, lead(d.outcome, d.reason, d.unknown)))
+        return Prepared(query, d.outcome, d.reason, nearest,
+                        fallback=notice + sources_only_answer(nearest, lead(d.outcome, d.reason, d.unknown)), **common)
     evidence = assemble(d.evidence, engine)
     sources = [e.hit for e in evidence]
     return Prepared(query, d.outcome, d.reason, sources, evidence, render(evidence),
-                    fallback=sources_only_answer(sources, lead(d.outcome, d.reason, d.unknown)),
-                    unknown=d.unknown, mode=mode, question=question, read_as=read_as)
+                    fallback=notice + sources_only_answer(sources, lead(d.outcome, d.reason, d.unknown)), **common)

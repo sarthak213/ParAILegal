@@ -523,6 +523,15 @@ body {
   line-height: 1.5;
 }
 
+/* ── Follow-up: the earlier question this one was read with ── */
+.follow-up-note {
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+.follow-up-note span { font-style: italic; }
+
 /* ── Streaming cursor: follows the last block of the markdown as it grows ── */
 .answer-md--streaming > :last-child::after,
 .answer-md--streaming > ul:last-child > li:last-child::after,

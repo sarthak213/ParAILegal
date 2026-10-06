@@ -65,12 +65,18 @@ def mode_of(name: str | None) -> str:
     return n if n in MODES else RESEARCH
 
 
-def messages(query: str, context: str, mode: str, outcome: str, read_as: str = "") -> list[dict]:
+def messages(query: str, context: str, mode: str, outcome: str, read_as: str = "",
+             earlier: str = "") -> list[dict]:
     """read_as: the question with typos fixed and lay or Hindi words given their legal terms
-    ("anticipatry bail" -> "anticipatory bail", "zamanat" -> "bail"), when that differs."""
+    ("anticipatry bail" -> "anticipatory bail", "zamanat" -> "bail"), when that differs.
+    earlier: the question this one follows up ("what is cheating?" before "and the punishment?")."""
     spec = MODES[mode]
     task = spec.instruction + (f"\n\n{CAVEAT_INSTRUCTION}" if outcome == CAVEAT else "")
-    question = f"Question: {query}" + (f"\nIn legal terms: {read_as}" if read_as else "")
+    if earlier:
+        question = f"Earlier question: {earlier}\nFollow-up question (answer this one): {query}"
+    else:
+        question = f"Question: {query}"
+    question += f"\nIn legal terms: {read_as}" if read_as else ""
     user = f"Sources:\n\n{context}\n\n{question}\n\n{task}"
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
 

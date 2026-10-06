@@ -49,6 +49,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.answer.followup import Previous
 from app.answer.gate import SOURCES_ONLY
 from app.answer.local import finish
 from app.answer.verify import citations, verify
@@ -119,7 +120,7 @@ async def answer(
     rag=Depends(get_rag_system),
 ) -> AnswerResponse:
     if hasattr(rag, "prepare"):  # v2
-        result = await rag.answer(request.query, request.domain, request.mode)
+        result = await rag.answer(request.query, request.domain, request.mode, _previous(request))
     else:
         result = await rag.answer(request.query, request.domain)
 
@@ -154,7 +155,7 @@ async def answer_stream(
     rag=Depends(get_rag_system),
 ) -> StreamingResponse:
     return StreamingResponse(
-        _stream_v2(rag, body.query, body.domain, body.mode, request) if hasattr(rag, "prepare")
+        _stream_v2(rag, body.query, body.domain, body.mode, _previous(body), request) if hasattr(rag, "prepare")
         else _stream_answer(rag, body.query, body.domain, request),
         media_type="text/event-stream",
         headers={
@@ -390,9 +391,17 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
+def _previous(body: AnswerRequest) -> Previous | None:
+    p = body.previous
+    return Previous(p.question, p.chunk_ids) if p and p.question.strip() else None
+
+
+async def _stream_v2(rag, query: str, domain: str | None, mode: str | None, previous: Previous | None,
                      request: Request) -> AsyncIterator[str]:
     """Events: sources, gate, [status: loading], token..., done (or error).
+
+    `gate` says how the question was handled: outcome, reason, provisions the corpus lacks, the
+    mode, and `follow_up`: the earlier question it was read as following up, or "".
 
     `done` carries the final answer (source numbers that point nowhere removed), `citations`
     (what each [n] refers to: [n] is the n-th source sent in `sources`) and `verification`
@@ -401,7 +410,7 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
     Everything runs on this machine, so the v1 proxy keepalive is not needed. When the gate
     declines, or no answer model is installed, the answer is written by code (`fallback`)."""
     try:
-        p = await asyncio.to_thread(rag.prepare, query, mode)
+        p = await asyncio.to_thread(rag.prepare, query, mode, previous)
     except Exception as e:
         yield _sse({"type": "error", "detail": f"Search failed: {e}"})
         return
@@ -411,7 +420,7 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
         "sources": [_to_source_chunk(s).model_dump(exclude_none=True) for s in p.sources],
     })
     yield _sse({"type": "gate", "outcome": p.outcome, "reason": p.reason, "unknown": p.unknown,
-                "mode": p.mode})
+                "mode": p.mode, "follow_up": p.earlier})
 
     if p.outcome == SOURCES_ONLY or rag.answerer is None:
         yield _sse({"type": "done", "answer": p.fallback, "citations": citations(p.evidence)})

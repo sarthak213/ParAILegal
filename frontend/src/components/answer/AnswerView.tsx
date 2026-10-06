@@ -19,6 +19,7 @@ interface Props {
   stage: StreamStage
   error: string
   verification?: Verification | null
+  followUp?: string  // the earlier question this one was read as following up
   onCitationClick: (sourceIndex: number) => void
 }
 
@@ -111,6 +112,7 @@ export function AnswerView({
   stage,
   error,
   verification,
+  followUp,
   onCitationClick,
 }: Props) {
   const [copied, setCopied] = useState(false)
@@ -146,6 +148,11 @@ export function AnswerView({
 
       {/* Query header */}
       <div className="answer-view__header">
+        {followUp && (
+          <div className="follow-up-note" title="Searched together with the earlier question. Use New Research to start fresh.">
+            Follow-up to: <span>{followUp}</span>
+          </div>
+        )}
         <h1 className="answer-view__query">{query}</h1>
         <div className="answer-view__meta">
           {domain && <span className="domain-badge">{domain.toUpperCase()}</span>}

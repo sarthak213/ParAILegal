@@ -27,6 +27,7 @@ from dataclasses import asdict, dataclass, field
 from app.answer.evidence import Evidence
 from app.answer.prompts import CAVEAT_LEAD, LEGAL_AID
 from app.answer.sources_only import DISCLAIMER
+from app.answer.urgent import NOTICES
 
 _CITE = re.compile(r"\[(\d+(?:\s*[,;]\s*\d+)*)\]")
 # "Section 138", "Sections 41 and 41A", "s. 35(1)", "Article 21", "Articles 14, 19 and 21"
@@ -38,7 +39,7 @@ _FIGURE = re.compile(r"(?<![\w\[(])\d{2,}(?:,\d{2,3})*(?:\.\d+)?(?![\w\])])")
 _LEGAL = re.compile(r"\b(?:shall|punish\w*|liable|must|may|entitled|offence|imprisonment|fine|penalty|"
                     r"section|article|right|prohibit\w*|require\w*|empower\w*|bail|arrest\w*)\b|\d",
                     re.IGNORECASE)
-CODE_WRITTEN = (CAVEAT_LEAD.strip(), LEGAL_AID.strip(), DISCLAIMER)
+CODE_WRITTEN = (CAVEAT_LEAD.strip(), LEGAL_AID.strip(), DISCLAIMER, *(n.text for n in NOTICES))
 
 UNSUPPORTED_WARN = 2       # this many unsupported provisions or figures -> warning
 UNCITED_WARN = 0.5         # this share of legal sentences without a source -> warning

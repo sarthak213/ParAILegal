@@ -32,12 +32,14 @@ class LocalAnswerer:
         """The answer, piece by piece: the caveat line (code), the model's text, the legal aid
         line in Summarise mode (code). The disclaimer is added by `finish`."""
         await self.server.ensure_running()
+        if p.notice:  # urgent rights and helplines (app/answer/urgent.py) come first
+            yield p.notice
         lead = prompts.lead(p.outcome)
         if lead:
             yield lead
         result = ChatResult()
         t0, first, wrote = time.monotonic(), None, False
-        async for text in stream_chat(self.server.base_url, prompts.messages(p.question, p.context, p.mode, p.outcome, p.read_as),
+        async for text in stream_chat(self.server.base_url, prompts.messages(p.question, p.context, p.mode, p.outcome, p.read_as, p.earlier),
                                       prompts.MODES[p.mode].max_tokens, self.temperature, result):
             if first is None:
                 first = time.monotonic() - t0
