@@ -13,6 +13,7 @@ provisions, numbered [1]..[n], each with a status line written by code:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -54,12 +55,30 @@ def _words(text: str, n: int) -> str:
     return " ".join(w[:n]) + (" …" if len(w) > n else "")
 
 
+# An "Illustrations." block runs to the next numbered sub-section, Explanation or the end
+_ILLUSTRATIONS = re.compile(r"Illustrations?\s*[.:—-]?\s.*?(?=\(\d+[A-Z]?\)\s|Explanation\b|$)", re.DOTALL)
+_PART = "\x00"  # marks part boundaries while illustrations are cut out
+
+
+def drop_illustrations(texts: list[str]) -> list[str]:
+    """The parts' texts without illustration blocks (examples, not law): in a long section they
+    sit between the definition and the punishments, which a cut would otherwise lose."""
+    joined = _PART.join(texts)
+    cut = _ILLUSTRATIONS.sub(lambda m: "[Illustrations omitted.] " + _PART * m.group(0).count(_PART), joined)
+    return cut.split(_PART)
+
+
 def provision_text(parts: list[dict], matched_id: str | None) -> tuple[str, bool]:
-    """The provision's text, and whether it had to be shortened."""
+    """The provision's text, and whether it had to be shortened: first by leaving out its
+    illustrations, then by keeping its opening and the part that matched."""
     texts = [p.get("text") or "" for p in parts]
     full = " ".join(texts)
     if tokens(full) <= PROVISION_TOKENS:
         return full, False
+    texts = drop_illustrations(texts)
+    full = " ".join(t for t in texts if t.strip())
+    if tokens(full) <= PROVISION_TOKENS:
+        return full, True
     room = int(PROVISION_TOKENS * WORDS_PER_TOKEN)
     at = next((i for i, p in enumerate(parts) if p.get("chunk_id") == matched_id), 0)
     if at == 0:

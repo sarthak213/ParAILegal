@@ -37,7 +37,7 @@ class LocalAnswerer:
             yield lead
         result = ChatResult()
         t0, first, wrote = time.monotonic(), None, False
-        async for text in stream_chat(self.server.base_url, prompts.messages(p.question, p.context, p.mode, p.outcome),
+        async for text in stream_chat(self.server.base_url, prompts.messages(p.question, p.context, p.mode, p.outcome, p.read_as),
                                       prompts.MODES[p.mode].max_tokens, self.temperature, result):
             if first is None:
                 first = time.monotonic() - t0

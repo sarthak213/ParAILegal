@@ -22,6 +22,12 @@ def test_messages_carry_sources_question_and_caveat():
     assert prompts.CAVEAT_INSTRUCTION not in prompts.messages("q", "c", prompts.RESEARCH, ANSWER)[1]["content"]
 
 
+def test_question_in_legal_terms():
+    user = prompts.messages("anticipatry bail", "[1] S", prompts.RESEARCH, ANSWER, "anticipatory bail")[1]["content"]
+    assert "Question: anticipatry bail\nIn legal terms: anticipatory bail" in user
+    assert "In legal terms" not in prompts.messages("q", "c", prompts.RESEARCH, ANSWER)[1]["content"]
+
+
 def test_code_written_parts():
     assert prompts.lead(CAVEAT) and not prompts.lead(ANSWER)
     assert "15100" in prompts.tail(prompts.SUMMARISE) and prompts.tail(prompts.RESEARCH) == ""
@@ -78,6 +84,10 @@ class Engine:
 
     def unknown_citations(self, query):
         return []
+
+    def parse(self, query):
+        from app.search.query import QueryParser
+        return QueryParser({}).parse(query)
 
     def provision(self, ref):
         return []

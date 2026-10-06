@@ -83,7 +83,7 @@ class SearchService:
         if p.outcome == SOURCES_ONLY or self.answerer is None:
             answer = p.fallback
         else:
-            text, v = verify("".join([t async for t in self.answerer.stream(p)]), p.evidence)
+            text, v = verify("".join([t async for t in self.answerer.stream(p)]), p.evidence, p.question)
             answer, verification = finish(text), v.to_dict()
         return {
             "query": query,

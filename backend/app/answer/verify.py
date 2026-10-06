@@ -78,8 +78,19 @@ def mentions(text: str) -> set[tuple[str, str]]:
     return out
 
 
+_ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+             "tenth", "eleventh", "twelfth"]
+_ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
+_ORDINAL_SCHEDULE = re.compile(rf"\b({'|'.join(_ORDINALS)})\s+schedule\b", re.IGNORECASE)
+
+
 def _source_mentions(e: Evidence) -> set[tuple[str, str]]:
-    found = mentions(f"{e.header}\n{e.relation}\n{e.text}")
+    text = f"{e.header}\n{e.relation}\n{e.text}"
+    found = mentions(text)
+    # "the Third Schedule" is how an Act names what an answer calls "Schedule III"
+    for m in _ORDINAL_SCHEDULE.finditer(text):
+        i = _ORDINALS.index(m.group(1).lower())
+        found |= {("schedule", _ROMAN[i]), ("schedule", str(i + 1))}
     act, _, number = e.ref.rpartition(" ")
     if number:
         kind = "article" if act == "ART" else "section"
@@ -118,14 +129,18 @@ def remove_invalid_ids(answer: str, n_sources: int) -> tuple[str, list[int]]:
     return _CITE.sub(fix, answer), bad
 
 
-def verify(answer: str, evidence: list[Evidence]) -> tuple[str, Verification]:
-    """The answer with invalid source numbers removed, and what the checks found."""
+def verify(answer: str, evidence: list[Evidence], question: str = "") -> tuple[str, Verification]:
+    """The answer with invalid source numbers removed, and what the checks found. Provisions
+    named in the question are not counted as invented ("498A" in "498A ka case kya hota hai")."""
     fixed, bad = remove_invalid_ids(answer, len(evidence))
     v = Verification(invalid_ids=sorted(set(bad)))
     body = strip_code_written(fixed)
 
     by_n = {e.n: _source_mentions(e) for e in evidence}
-    known: set[tuple[str, str]] = set().union(*by_n.values())
+    # a question may name a provision bare ("498A ka case"): any number in it counts as known
+    asked = mentions(question) | {(kind, n.upper()) for n in re.findall(r"\b\d+[A-Z]{0,2}\b", question, re.IGNORECASE)
+                                  for kind in ("section", "article")}
+    known: set[tuple[str, str]] = set().union(*by_n.values()) | asked
     source_text = "".join(f"\n{e.header}\n{e.relation}\n{e.text}" for e in evidence)
     v.unsupported_provisions = sorted({f"{k.title()} {n}" for k, n in mentions(body) if (k, n) not in known})
 

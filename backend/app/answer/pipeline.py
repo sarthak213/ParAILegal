@@ -35,6 +35,7 @@ class Prepared:
     unknown: list[str] = field(default_factory=list)
     mode: str = RESEARCH
     question: str = ""  # the query without its mode prefix ("ADVOCATE: ...")
+    read_as: str = ""   # the question in legal terms when that differs (typos fixed, glossary)
 
 
 def readable_ref(ref: str) -> str:
@@ -67,13 +68,15 @@ def prepare(query: str, engine: Any, k: int, mode: str | None = None) -> Prepare
     mode = mode_of(mode or prefix)
     hits = engine.search(query, k=k)
     unknown = engine.unknown_citations(query)
+    english = engine.parse(question).english
+    read_as = english if english.lower() != question.lower() else ""
     d = decide(question, hits, unknown)
     if d.outcome == SOURCES_ONLY:
         nearest = [] if (d.unknown or "another country" in d.reason or not hits) else hits[:NEAREST]
         return Prepared(query, d.outcome, d.reason, nearest, unknown=d.unknown, mode=mode, question=question,
-                        fallback=sources_only_answer(nearest, lead(d.outcome, d.reason, d.unknown)))
+                        read_as=read_as, fallback=sources_only_answer(nearest, lead(d.outcome, d.reason, d.unknown)))
     evidence = assemble(d.evidence, engine)
     sources = [e.hit for e in evidence]
     return Prepared(query, d.outcome, d.reason, sources, evidence, render(evidence),
                     fallback=sources_only_answer(sources, lead(d.outcome, d.reason, d.unknown)),
-                    unknown=d.unknown, mode=mode, question=question)
+                    unknown=d.unknown, mode=mode, question=question, read_as=read_as)

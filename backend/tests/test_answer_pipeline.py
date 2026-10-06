@@ -75,6 +75,15 @@ def test_parts_are_joined_and_long_provisions_trimmed():
     assert tokens(text) <= PROVISION_TOKENS + 5
 
 
+def test_illustrations_go_before_the_punishments():
+    # BNS 318's shape: definition, illustrations across parts, then the punishments
+    parts = [{"chunk_id": "s::1", "text": "(1) Whoever cheats is said to cheat. Illustrations. (a) A " + "word " * 280},
+             {"chunk_id": "s::2", "text": "more example " * 150 + "A cheats."},
+             {"chunk_id": "s::3", "text": "(2) Whoever cheats shall be punished with imprisonment up to three years."}]
+    text, trimmed = provision_text(parts, "s::1")
+    assert trimmed and "[Illustrations omitted.]" in text and "three years" in text and "example" not in text
+
+
 def test_each_provision_once():
     corpus = Corpus({"BNS 103": [BNS_103]})
     ev = assemble([{**BNS_103, "_ref": "BNS 103"}, {**BNS_103, "_ref": "BNS 103"}], corpus)
@@ -93,6 +102,10 @@ class Engine(Corpus):
 
     def unknown_citations(self, query):
         return self.unknown
+
+    def parse(self, query):
+        from app.search.query import QueryParser
+        return QueryParser({}).parse(query)
 
 
 def test_prepare_answers_with_numbered_evidence():

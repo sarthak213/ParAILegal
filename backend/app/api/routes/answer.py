@@ -430,7 +430,7 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None,
         yield _sse({"type": "error", "detail": f"{e}. The matching provisions are listed in the sources."})
         return
     # the verifier: drops [n] that point nowhere, flags provisions and figures not in the sources
-    fixed, v = verify("".join(pieces), p.evidence)
+    fixed, v = verify("".join(pieces), p.evidence, p.question)
     if v.warning or v.invalid_ids:
         logger.warning("Verifier on %r: %s", p.question, v.to_dict())
     yield _sse({"type": "done", "answer": finish(fixed), "citations": citations(p.evidence),

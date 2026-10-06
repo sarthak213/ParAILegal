@@ -51,6 +51,17 @@ def test_provision_pinned_on_the_wrong_source():
     assert not v.unsupported_provisions
 
 
+def test_provisions_named_in_the_question_are_not_invented():
+    _, v = verify("Section 498A was replaced by the cruelty provision [2].", EV, "498A ka case kya hota hai")
+    assert not v.unsupported_provisions
+
+
+def test_ordinal_schedules():
+    third = Evidence(1, "x_act SCHEDULE", "Schedule", "In force", "THE THIRD SCHEDULE lists the rates.", {})
+    _, v = verify("Schedule III lists the rates [1].", [third])
+    assert not v.unsupported_provisions
+
+
 def test_uncited_legal_sentences_are_counted():
     _, v = verify("A person who commits murder shall be punished with death. Murder is serious [2].", EV)
     assert v.claims == 1 and v.uncited == ["A person who commits murder shall be punished with death."]

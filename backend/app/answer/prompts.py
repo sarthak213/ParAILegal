@@ -16,7 +16,7 @@ RESEARCH, SUMMARISE, ADVOCATE = "research", "summarise", "advocate"
 SYSTEM = """You are ParAILegal, a research assistant for Indian law. You answer using only the numbered sources given with the question.
 
 Rules:
-1. After each sentence that states the law, write the number of the source it comes from in square brackets, like [2]. Use only the numbers of the sources given.
+1. After each sentence or bullet point that states the law, write the number of the source it comes from in square brackets, like [2], even when there is only one source. Use only the numbers of the sources given.
 2. Use only the sources. Never mention a section, article, Act, case, penalty or date that is not in them, even if you know it.
 3. Copy numbers, ages, time limits, amounts and penalties exactly as the source states them, including words like "not less than", "above" and "within".
 4. If the sources do not answer the question, say so in one sentence, then say briefly what they do cover.
@@ -65,10 +65,13 @@ def mode_of(name: str | None) -> str:
     return n if n in MODES else RESEARCH
 
 
-def messages(query: str, context: str, mode: str, outcome: str) -> list[dict]:
+def messages(query: str, context: str, mode: str, outcome: str, read_as: str = "") -> list[dict]:
+    """read_as: the question with typos fixed and lay or Hindi words given their legal terms
+    ("anticipatry bail" -> "anticipatory bail", "zamanat" -> "bail"), when that differs."""
     spec = MODES[mode]
     task = spec.instruction + (f"\n\n{CAVEAT_INSTRUCTION}" if outcome == CAVEAT else "")
-    user = f"Sources:\n\n{context}\n\nQuestion: {query}\n\n{task}"
+    question = f"Question: {query}" + (f"\nIn legal terms: {read_as}" if read_as else "")
+    user = f"Sources:\n\n{context}\n\n{question}\n\n{task}"
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
 
 
