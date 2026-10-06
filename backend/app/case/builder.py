@@ -48,16 +48,39 @@ FACTS_PROMPT = """Read these facts of a case and list, using only what the text 
 - harm: injuries, deaths, threats or losses
 - property: money, goods or documents involved, with amounts as written
 - documents: papers, messages, recordings or reports mentioned
-- acts: each separate thing an accused person did that may be wrong, one short sentence each. Name people by their role, not their name, and say why if the text says why (for example "the husband beat his wife with a belt because her parents did not pay the dowry he demanded", "the husband threatened by message to kill his wife unless money was paid")
+- acts: each separate thing an accused person did that may be wrong, one short sentence each, only things this text says happened. Name people by their role, not their name, and say why if the text says why. (The form only, from an unrelated case: "the cashier took money from the shop's till without the owner's consent".)
 Do not add anything that is not in the text. Do not name any law.
 
 Facts:
 {facts}"""
 
+# words an act may use that the facts need not contain: roles ("the husband"), joining words
+_ROLE_WORDS = set("""accused complainant victim deceased husband wife mother father son daughter brother sister
+    parents parent in-laws inlaws law relative relatives family person persons someone man woman boy girl child
+    their there them they with without from into because when after before about which that this unless while
+    also then were have been being said does did done made make""".split())
+
+
+def grounded(act: str, facts: str, share: float = 0.6) -> bool:
+    """Most of the act's content words are in the facts. A 4B model sometimes copies an example
+    from its prompt into the acts ("threatened by message to kill") though the facts say nothing of it."""
+    plain = facts.lower()
+    stems = {w[:5] for w in re.findall(r"[a-z]{4,}", plain)}
+    words = [w for w in re.findall(r"[a-z]{4,}", act.lower()) if w not in _ROLE_WORDS]
+    if not words:
+        return True
+    return sum(w[:5] in stems for w in words) >= share * len(words)
+
 
 async def structure_facts(facts: str, base_url: str) -> dict:
-    return await complete_json(base_url, [{"role": "user", "content": FACTS_PROMPT.format(facts=facts)}],
-                               FACTS_SCHEMA, max_tokens=900)
+    """The structured facts; acts the facts do not bear out are moved to "acts_dropped", so the
+    lawyer sees them and can put one back."""
+    out = await complete_json(base_url, [{"role": "user", "content": FACTS_PROMPT.format(facts=facts)}],
+                              FACTS_SCHEMA, max_tokens=900)
+    acts = [a for a in out.get("acts", []) if a.strip()]
+    out["acts"] = [a for a in acts if grounded(a, facts)]
+    out["acts_dropped"] = [a for a in acts if not grounded(a, facts)]
+    return out
 
 
 # ── Offences ───────────────────────────────────────────────────────────
@@ -86,13 +109,15 @@ def is_offence(ref: str, schedule: Schedule, engine: Any = None) -> bool:
 
 
 def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None = None,
-             k: int = 10) -> list[dict]:
+             k: int = 10, include: list[str] | None = None) -> list[dict]:
     """Candidate offences for the facts, best first, each with its classification and whether
     a checklist of elements exists for it.
 
     acts: the structured facts' "acts" (one short sentence per thing done); searched one by one,
     they find far better offences than the narrative's sentences. Scored by search rank (the
-    cross-encoder rates narrative text too low to separate offences)."""
+    cross-encoder rates narrative text too low to separate offences).
+
+    include: sections the lawyer added by number ("BNS 85"); listed first, whatever search found."""
     acts = [a for a in (acts or []) if a.strip()][:MAX_QUERIES]
     # the opening of the narrative too: it carries the relationships the acts may leave out
     queries = [*acts, facts[:600]] if acts else sentences(facts)
@@ -113,8 +138,9 @@ def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None
                     kept.append(ref)
     ranked = sorted(score, key=lambda r: -score[r])
     chosen = sorted(dict.fromkeys(kept + ranked), key=lambda r: -score[r])[:max(CANDIDATES, len(kept))]
+    added = [r for r in dict.fromkeys(include or []) if engine.provision(r)]
     out = []
-    for ref in chosen:
+    for ref in [*added, *(r for r in chosen if r not in added)]:
         act, _, number = ref.rpartition(" ")
         offence = OFFENCES.get(ref)
         parts = engine.provision(ref)
@@ -124,7 +150,8 @@ def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None
             "name": offence.name if offence else title.split("—", 1)[-1].strip().rstrip("."),
             "title": title,
             "act": (parts[0] if parts else hit_of[ref]).get("document_title"),
-            "score": round(score[ref], 3),
+            "score": round(score.get(ref, 0.0), 3),
+            "added": ref in added,
             "has_checklist": offence is not None,
             "classification": [c.as_dict() for c in schedule.classify(number)] if act == "BNS" else [],
         })

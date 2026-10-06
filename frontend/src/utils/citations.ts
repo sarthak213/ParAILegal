@@ -135,10 +135,24 @@ export function shortLabel(source: SourceChunk): string {
   const first = (source.citation || source.hierarchy || '').split('\n')[0]
   const head = first.split('—')[0].trim()
   if (source.source_type === 'constitution') return head.replace(/^Article\s+/i, 'Art. ')
-  if (/judgement/i.test(source.source_type || '')) return first.split(/\s+v\.?\s+/i)[0].trim() || 'Judgment'
+  if (/judge?ment/i.test(source.source_type || '')) return judgmentLabel(first)
   const section = head.replace(/^Section\s+/i, 'S. ')
   const act = actOf(source) ?? shortActName(source.document_title || '')
   return act ? `${section} ${act}` : section
+}
+
+/**
+ * A chip-sized judgment name: the first party and the year, "Jagjit Singh (2018)", from
+ * "JAGJIT SINGH v. STATE OF PUNJAB, [2018] 13 SCR 405 : 2018 INSC 883 (Supreme Court, decided 2018-09-26)".
+ */
+function judgmentLabel(header: string): string {
+  const party = header.split(/\s+v(?:s)?\.?\s+/i)[0]
+    .replace(/\s*(?:&|and)\s+(?:ORS|ANR|OTHERS|ANOTHER)\.?.*$/i, '')
+    .replace(/\s*@.*$/, '')  // "CHARAN SINGH @ CHARANJIT SINGH": the first name it gives
+    .trim()
+  const name = party.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase())
+  const year = header.match(/decided\s+(\d{4})/)?.[1] ?? header.match(/\[(\d{4})\]|\b(\d{4})\s+INSC/)?.slice(1).find(Boolean)
+  return (name || 'Judgment') + (year ? ` (${year})` : '')
 }
 
 /**

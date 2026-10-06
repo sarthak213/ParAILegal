@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 
-import { Sidebar } from './components/layout/Sidebar'
+import { Sidebar, type View } from './components/layout/Sidebar'
+import { CaseBuilder } from './components/case/CaseBuilder'
 import { QueryInput } from './components/query/QueryInput'
 import { AnswerView } from './components/answer/AnswerView'
 import { SourcesPanel } from './components/sources/SourcesPanel'
@@ -25,6 +26,7 @@ export default function App() {
   const [domain, setDomain] = useState<Domain>('')
 
   // ── UI state ──────────────────────────────────────────────────────
+  const [view, setView] = useState<View>('research')
   const [activeHistoryId, setActiveHistoryId]   = useState<string | null>(null)
   const [sourcesCollapsed, setSourcesCollapsed] = useState(false)
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
@@ -136,10 +138,13 @@ export default function App() {
         onDelete={removeEntry}
         onClear={clearAll}
         onNew={handleNew}
+        view={view}
+        onView={setView}
       />
 
       {/* ── Main ── */}
-      <main className="main">
+      {/* kept mounted while hidden, so switching views keeps each one's work */}
+      <main className="main" hidden={view !== 'research'}>
         {/* Content area */}
         <div className="content-area">
           {/* Answer panel */}
@@ -219,6 +224,9 @@ export default function App() {
           isStreaming={isStreaming}
           disabled={backendStatus !== 'ready'}
         />
+      </main>
+      <main className="main" hidden={view !== 'case'}>
+        <CaseBuilder ready={backendStatus === 'ready'} />
       </main>
     </div>
   )
