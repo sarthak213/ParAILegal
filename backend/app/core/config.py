@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # One JSONL per Act, built from India Code by scripts/build_corpus.py
     STATUTE_FILES: list[Path] = sorted(STATUTES_DIR.glob("*.jsonl")) if STATUTES_DIR.exists() else []
 
+    # The prebuilt search index (app/search/pack.py): built from the corpus files on first start
+    PACK_DIR: Path = DATA_DIR / "pack"
+
     JUDGEMENT_FILES: list[Path] = [
         DATA_DIR / "landmarks.jsonl",
     ]

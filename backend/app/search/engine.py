@@ -14,6 +14,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from rapidfuzz import fuzz
@@ -106,7 +107,9 @@ def _old_aliases() -> dict[str, list[str]]:
 
 class SearchEngine:
     def __init__(self, chunks: list[dict], dense: DenseSearch | None = None,
-                 router: Any = None, weights: Weights | None = None, reranker: Any = None) -> None:
+                 router: Any = None, weights: Weights | None = None, reranker: Any = None,
+                 bm25: BM25Index | None = None) -> None:
+        """bm25: a prebuilt keyword index (from the data pack); built from the chunks if None."""
         self.chunks = chunks
         self.dense = dense
         self.reranker = reranker
@@ -119,9 +122,10 @@ class SearchEngine:
         self._authority = [1.0 if c["_domain"] != "statutes" else float(c.get("authority") or 0.0)
                            for c in chunks]
         self._refs = [ref_of(c) for c in chunks]
-        aliases = _old_aliases()
-        docs = [self._index_doc(c, aliases) for c in chunks]
-        self.bm25 = BM25Index(docs)
+        if bm25 is None:
+            aliases = _old_aliases()
+            bm25 = BM25Index([self._index_doc(c, aliases) for c in chunks])
+        self.bm25 = bm25
         self.parser = QueryParser(self.bm25.vocabulary)
 
     # ── Index documents ────────────────────────────────────────────────
@@ -302,17 +306,54 @@ class SearchEngine:
 
     @classmethod
     def from_corpus(cls, settings: Any = None, dense: DenseSearch | str | None = None,
-                    weights: Weights | None = None, rerank: str | None = None) -> SearchEngine:
-        """dense: a DenseSearch callable, or an embedder key from app.search.dense.SPECS."""
+                    weights: Weights | None = None, rerank: str | None = None,
+                    use_pack: bool = True) -> SearchEngine:
+        """dense: a DenseSearch callable, or an embedder key from app.search.dense.SPECS.
+
+        Loads the data pack (app/search/pack.py) when it is current; otherwise builds the index
+        from the corpus JSONL and writes the pack, so the next start is fast."""
         from app.core.config import settings as default_settings
+        from app.search import pack
+        from app.services.routing_service import QueryRouter
+
+        settings = settings or default_settings
+        reranker = None
+        if rerank:
+            from app.search.rerank import Reranker
+
+            reranker = Reranker(rerank)
+        dense_key = dense if isinstance(dense, str) else None
+        pack_dir = Path(settings.PACK_DIR)
+        loaded = pack.load(pack_dir, settings, dense_key) if use_pack and not callable(dense) else None
+        if loaded is not None:
+            if dense_key:
+                from app.search.dense import DenseIndex
+
+                dense = DenseIndex.from_vectors(dense_key, loaded.vectors, loaded.owner, len(loaded.chunks))
+            return cls(loaded.chunks, dense=dense, router=QueryRouter(settings), weights=weights,
+                       reranker=reranker, bm25=BM25Index.open(str(loaded.db_path), loaded.vocabulary))
+
+        engine = cls(cls.load_chunks(settings), dense=None, router=QueryRouter(settings), weights=weights,
+                     reranker=reranker)
+        if dense_key:
+            from app.search.dense import DenseIndex
+
+            engine.dense = DenseIndex(dense_key, [c["_embed_text"] for c in engine.chunks])
+        elif dense is not None:
+            engine.dense = dense
+        if use_pack and not callable(dense):
+            pack.write(pack_dir, settings, engine, dense_key)
+        return engine
+
+    @staticmethod
+    def load_chunks(settings: Any) -> list[dict]:
+        """Every chunk from the corpus JSONL, as the engine holds it (the slow path: ~1.5 s)."""
         from app.infrastructure.loaders.dataset_loader import (
             ConstitutionLoader,
             JudgementLoader,
             StatuteLoader,
         )
-        from app.services.routing_service import QueryRouter
 
-        settings = settings or default_settings
         chunks: list[dict] = []
         for loader, domain in ((ConstitutionLoader, "constitution"), (StatuteLoader, "statutes"),
                                (JudgementLoader, "judgements")):
@@ -325,13 +366,4 @@ class SearchEngine:
                 if domain == "statutes":
                     c["_act"] = c.get("act_code") or (c.get("chunk_id") or "").split("_")[0].upper()
                 chunks.append(c)
-        if isinstance(dense, str):
-            from app.search.dense import DenseIndex
-
-            dense = DenseIndex(dense, [c["_embed_text"] for c in chunks])
-        reranker = None
-        if rerank:
-            from app.search.rerank import Reranker
-
-            reranker = Reranker(rerank)
-        return cls(chunks, dense=dense, router=QueryRouter(settings), weights=weights, reranker=reranker)
+        return chunks
