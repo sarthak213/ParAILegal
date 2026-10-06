@@ -19,6 +19,8 @@ from app.answer.local import LocalAnswerer, finish
 from app.answer.pipeline import Prepared, prepare
 from app.answer.verify import citations, verify
 from app.case.schedule import Schedule
+from app.judgments.law_at_time import History
+from app.judgments.store import JudgmentStore
 from app.llm.server import LlamaServer
 from app.core.config import Settings
 
@@ -29,6 +31,8 @@ class SearchService:
         self.engine = None
         self.queryRouter = None
         self.answerer = None
+        self.judgments: JudgmentStore | None = None
+        self.history: History | None = None
 
     async def initialize(self) -> bool:
         from app.search.engine import SearchEngine
@@ -42,6 +46,12 @@ class SearchService:
         # the BNSS First Schedule, for the Case Builder's procedure (read from the corpus)
         self.schedule = Schedule.from_engine(self.engine)
         print(f"v2 search ready: {len(self.engine.chunks)} chunks.")
+        # Supreme Court judgments and the amendment history, for judgments search and the Case
+        # Builder's precedents; both optional data (scripts/build_judgments_index.py, build_corpus.py)
+        self.judgments = await asyncio.to_thread(JudgmentStore.open, dense_key=self.settings.DENSE_MODEL or None)
+        self.history = await asyncio.to_thread(History)
+        if self.judgments:
+            print(f"Judgments: {self.judgments.size} Supreme Court judgments.")
 
         s = self.settings
         server = LlamaServer(s.LLM_ENGINE_DIR, s.LLM_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
