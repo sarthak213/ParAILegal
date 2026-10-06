@@ -1023,6 +1023,10 @@ def main() -> int:
     reports = []
     total = Counter()
     built: list[tuple[dict, list[dict]]] = []
+    history: dict[str, list] = {}  # act code -> its amendment history, from the raw text's footnotes
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.history.amendments import extract as extract_amendments, reattribute
+
     for meta, text in jobs:
         records, rep = build_act(meta, text)
         reports.append(rep)
@@ -1030,6 +1034,15 @@ def main() -> int:
             total["acts_without_sections"] += 1
             continue
         built.append((rep, records))
+        # the footnotes the section text drops record every amendment: kept beside the corpus
+        amendments = extract_amendments(records[0]["act_code"], text) if meta.get("_from_pdf") else []
+        texts: dict[str, str] = {}
+        for r in records:
+            texts[r["section_number"]] = texts.get(r["section_number"], "") + " " + (r.get("text") or "")
+        rep["amendments_refiled"] = reattribute(amendments, texts)
+        history[rep["code"]] = amendments
+        rep["amendments"] = len(amendments)
+        rep["amendments_dated"] = sum(bool(a.effective) for a in amendments)
     rejoin = word_rejoiner(r["text"] for _, records in built for r in records)
     authority = act_authority(built)
     for _, records in built:
@@ -1112,10 +1125,20 @@ def main() -> int:
         total["acts"] += 1
         total["chunks"] += len(records)
         total["sections"] += rep["found"]
+    # amendment history beside the corpus: data/amendments/<code>.jsonl (app/history/amendments.py)
+    amend_dir = args.out.parent / "amendments"
+    amend_dir.mkdir(parents=True, exist_ok=True)
+    for code, amendments in history.items():
+        with (amend_dir / f"{code}.jsonl").open("w", encoding="utf-8") as f:
+            for a in amendments:
+                f.write(json.dumps(a.as_dict(), ensure_ascii=False) + "\n")
+    total["amendments"] = sum(len(v) for v in history.values())
     (args.out / "_build_report.json").write_text(json.dumps(reports, indent=1, ensure_ascii=False), encoding="utf-8")
     low = [r for r in reports if r["toc"] and r["found"] < 0.9 * r["toc"] and not r["truncated"]]
     cut = [r["title"] for r in reports if r["truncated"]]
-    print(f"{total['acts']} acts, {total['sections']} sections, {total['chunks']} chunks -> {args.out}")
+    print(f"{total['acts']} acts, {total['sections']} sections, {total['chunks']} chunks -> {args.out}; "
+          f"{total['amendments']} amendments -> {amend_dir} "
+          f"({sum(r.get('amendments_refiled', 0) for r in reports)} refiled under the section whose text has them)")
     print(f"{total['acts_without_sections']} acts had no arrangement of sections; "
           f"{len(low)} acts matched under 90% of their listed sections")
     print(f"{len(cut)} acts still rely on a text extraction cut short at {TEXT_CAP:,} characters")

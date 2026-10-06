@@ -14,6 +14,11 @@ faiss-cpu
 rapidfuzz
 fastembed
 
+# Build scripts only: build_citator reads the judgments dataset's parquet metadata; build_judgments
+# reads the judgment PDFs with PDFium
+pyarrow
+pypdfium2
+
 # Tests
 pytest
 pytest-asyncio

@@ -88,14 +88,22 @@ BRIEF_INSTRUCTION = (
     "checklist); 'Points for the prosecution'; 'Points for the defence' (exceptions, provisos and "
     "missing elements from the sources); 'Gaps to investigate' (facts that still need evidence). "
     "Make clear these are arguments, not settled conclusions. About 300 to 450 words.")
-BRIEF_MAX_TOKENS = 1000
+BRIEF_PRECEDENTS = (
+    "Some sources are Supreme Court judgments. Add a '### Precedents' section after 'Offences': for each "
+    "judgment, what it held [n], which facts are alike and which differ (from its 'Facts similar' and 'Facts "
+    "different' lines), how far its principle still applies, and what its 'Law at the time' line says about "
+    "the law it applied. A judgment whose facts differ can still be cited for its principle; say so. If a "
+    "judgment carries a 'Caution' line, repeat it.")
+BRIEF_MAX_TOKENS = 1300  # the precedents section adds about 300 words
 
 
-def brief_messages(facts: str, context: str, checklist: str) -> list[dict]:
+def brief_messages(facts: str, context: str, checklist: str, precedents: bool = False) -> list[dict]:
     """The Case Builder's brief (app/case/builder.py): the facts take the question's place, and
-    the elements checklist the lawyer confirmed goes with the sources."""
+    the elements checklist the lawyer confirmed goes with the sources; Supreme Court judgments
+    among the sources get a section of their own."""
+    task = BRIEF_INSTRUCTION + (f" {BRIEF_PRECEDENTS}" if precedents else "")
     user = (f"Sources:\n\n{context}\n\nElements checklist (from the facts):\n{checklist}\n\n"
-            f"Facts of the case:\n{facts}\n\n{BRIEF_INSTRUCTION}")
+            f"Facts of the case:\n{facts}\n\n{task}")
     return [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}]
 
 

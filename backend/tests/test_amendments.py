@@ -51,6 +51,29 @@ def test_text_on_a_past_date():
     assert now.text == "Whoever, being the husband ..." and now.complete
 
 
+def test_dates_and_their_basis():
+    from app.history.amendments import COMMENCED, dating, parse_note
+    assert dating("Ins. by Act 46 of 1983, s. 2 (w.e.f. 25-12-1983).", "Act 46 of 1983") == ("1983-12-25", "w.e.f.", 1983)
+    assert dating("Ins. by Act 46 of 1983, s. 2.", "Act 46 of 1983") == (None, "", 1983)
+    assert dating("Added by notification No. G.S.R. 726(E), dated 8-10-2008.", "")[:2] == ("2008-10-08", "notification date")
+    note = "1st day of July, 2024, except the provision of sub-section (2) of section 106, vide notification No. S.O. 850(E)"
+    assert parse_note(note)[0] == COMMENCED and dating(note, "", COMMENCED)[:2] == ("2024-07-01", "commencement")
+    assert parse_note("The proviso ins. by Act 3 of 1951, s. 2.")[0] == INSERTED
+
+
+def test_an_undated_change_is_placed_by_its_year():
+    page = f"""498A. Cruelty.—1[Whoever, being the husband subjects her to cruelty shall be punished.]
+{SEP}
+1. Ins. by Act 46 of 1983, s. 2.
+"""
+    am = extract("IPC", page)
+    body = "Whoever, being the husband subjects her to cruelty shall be punished."
+    assert text_as_on(body, am, "1980-01-01").text == ""          # before 1983: the words were not there
+    assert text_as_on(body, am, "1990-01-01").text == body        # after 1983: as now
+    same_year = text_as_on(body, am, "1983-06-01")
+    assert same_year.text == body and not same_year.complete and same_year.undated  # cannot tell
+
+
 def test_unknown_earlier_wording_is_reported_not_guessed():
     page = f"""4. Extension of Code.—1[The provisions of this Code apply also to any offence.]
 {SEP}
