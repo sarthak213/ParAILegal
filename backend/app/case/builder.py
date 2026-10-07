@@ -22,6 +22,7 @@ from collections import defaultdict
 from typing import Any
 
 from app.case.elements import OFFENCES, Offence
+from app.case.offence_index import PUNISHES
 from app.case.schedule import Schedule
 from app.llm.client import complete_json
 
@@ -91,7 +92,7 @@ MAX_QUERIES = 12
 CANDIDATES = 8
 PER_ACT = 2  # each act's own top offences are kept, so one theme cannot crowd out the rest
 # a provision that punishes something (special Acts have no schedule row: "Penalty for demanding dowry")
-_PUNISHES = re.compile(r"shall be punish|shall be punishable|punishable with", re.IGNORECASE)
+_PUNISHES = PUNISHES  # app/case/offence_index.py: shared, so both agree on what is an offence
 
 
 def sentences(facts: str) -> list[str]:
@@ -106,6 +107,21 @@ def is_offence(ref: str, schedule: Schedule, engine: Any = None) -> bool:
     if act in ("BNS", "BNSS", "BSA", "ART", "CASE", "IPC", "CRPC", "IEA") or engine is None:
         return False  # BNS offences are all in the schedule; the rest are procedure, evidence or repealed
     return any(_PUNISHES.search(p.get("text") or "") for p in engine.provision(ref))
+
+
+USE_OFFENCE_INDEX = True  # eval/case_offences.py --baseline turns it off to compare
+
+
+def offence_index(engine: Any, schedule: Schedule):
+    """The offence-only index, built once per engine (about two seconds); None for an engine
+    without the corpus chunks (tests)."""
+    if not USE_OFFENCE_INDEX or not hasattr(engine, "chunks"):
+        return None
+    if getattr(engine, "_offence_index", None) is None:
+        from app.case.offence_index import OffenceIndex
+
+        engine._offence_index = OffenceIndex(engine, schedule)
+    return engine._offence_index
 
 
 def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None = None,
@@ -124,9 +140,15 @@ def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None
     score: dict[str, float] = defaultdict(float)
     hit_of: dict[str, dict] = {}
     kept: list[str] = []  # each act's own best offences, in order
+    index = offence_index(engine, schedule)
     for query in queries:
         own = 0
-        for h in engine.search(query, k=k):
+        # both searches: the offence index (app/case/offence_index.py) and the corpus search fail on
+        # different facts, so each adds its ranks (eval/case_offences.py)
+        hits = engine.search(query, k=k)
+        if index is not None:
+            hits = [{"_ref": ref, "_rank": rank} for rank, (ref, _) in enumerate(index.search(query, k=k), 1)] + hits
+        for h in hits:
             ref = DEFINED_IN.get(h["_ref"], h["_ref"])
             if not is_offence(ref, schedule, engine):
                 continue
