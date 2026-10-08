@@ -94,3 +94,16 @@ def test_the_real_ipc():
     assert ("inserted", "Act 43 of 1986", "1986-11-19") in history("304B")
     assert ("substituted", "Act 26 of 1955", "1956-01-01") in history("302")
     assert ("substituted", "Act 13 of 2013", "2013-02-03") in history("375")
+
+
+def test_constitution_footnotes_without_a_full_stop_and_amended_titles():
+    page = f"""21. Protection of life and personal liberty.—No person shall be deprived of his life.
+2[21A. Right to education.—The State shall provide free and compulsory education.]
+368. 1[Power of Parliament to amend the Constitution and procedure therefor].—(1) Parliament may amend.
+{SEP}
+1. Subs. by the Constitution (Twenty-fourth Amendment) Act, 1971, s. 3, for "Procedure for amendment" (w.e.f. 5-11-1971).
+2 Ins. by the Constitution (Eighty-sixth Amendment) Act, 2002, s. 2 (w.e.f. 1-4-2010).
+"""
+    am = {(a.section, a.action, a.effective) for a in extract("ART", page)}
+    assert ("21A", INSERTED, "2010-04-01") in am         # "2 Ins." read, though it has no full stop
+    assert ("368", SUBSTITUTED, "1971-11-05") in am      # "368. 1[Power ..." is still article 368's heading
