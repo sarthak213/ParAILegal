@@ -75,15 +75,16 @@ def _v2(rag):
     return rag
 
 
-async def _model_url(rag) -> str:
-    if rag.answerer is None:
-        raise HTTPException(503, "No answer model is installed; the Case Builder needs one for this step")
+async def _model(rag):
+    """The Case Builder's model (CASE_MODEL_PATH, else the answer model), running."""
     try:
-        await rag.answerer.server.ensure_running()
+        return await rag.case_model()
     except RuntimeError as e:
         raise HTTPException(503, str(e)) from e
-    rag.answerer.server.touch()
-    return rag.answerer.server.base_url
+
+
+async def _model_url(rag) -> str:
+    return (await _model(rag)).base_url
 
 
 @router.post("/facts", summary="Structure the facts")
@@ -157,12 +158,12 @@ def _precedent_evidence(rag, items: list[Precedent], start: int) -> list[Evidenc
 @router.post("/brief", summary="Write the case brief (SSE)", response_class=StreamingResponse)
 async def brief(request: Request, body: BriefRequest, rag=Depends(get_rag_system)) -> StreamingResponse:
     rag = _v2(rag)
-    base_url = await _model_url(rag)
-    return StreamingResponse(_stream_brief(rag, body, base_url, request), media_type="text/event-stream",
+    server = await _model(rag)
+    return StreamingResponse(_stream_brief(rag, body, server, request), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-async def _stream_brief(rag, body: BriefRequest, base_url: str, request: Request) -> AsyncIterator[str]:
+async def _stream_brief(rag, body: BriefRequest, server, request: Request) -> AsyncIterator[str]:
     evidence = await asyncio.to_thread(builder.brief_evidence, body.refs, rag.engine)
     if not evidence:
         yield _sse({"type": "error", "detail": "None of those provisions is in the corpus"})
@@ -176,10 +177,10 @@ async def _stream_brief(rag, body: BriefRequest, base_url: str, request: Request
                                       precedents=any(e.ref.startswith("SC ") for e in evidence))
     pieces: list[str] = []
     try:
-        async for text in stream_chat(base_url, messages, prompts.BRIEF_MAX_TOKENS, rag.settings.TEMPERATURE_ANSWER):
+        async for text in stream_chat(server.base_url, messages, prompts.BRIEF_MAX_TOKENS, rag.settings.TEMPERATURE_ANSWER):
             if await request.is_disconnected():
                 return
-            rag.answerer.server.touch()
+            server.touch()
             pieces.append(text)
             yield _sse({"type": "token", "token": text})
     except Exception as e:
