@@ -177,10 +177,26 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parents[1] / "data" / "constitution.jsonl")
     ap.add_argument("--cache", type=Path, default=Path(__file__).resolve().parents[1] / "data" / "pdf_text")
     args = ap.parse_args()
-    records, report = build(pdf_to_text(args.pdf, args.cache, args.pdf.stem))
+    raw = pdf_to_text(args.pdf, args.cache, args.pdf.stem)
+    records, report = build(raw)
     with args.out.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # the amendment history beside the Acts' (data/amendments/<code>.jsonl; act code "ART")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.history.amendments import extract_constitution
+
+    texts: dict[str, str] = {}
+    for r in records:
+        texts[r["article_number"]] = texts.get(r["article_number"], "") + " " + (r.get("text") or "")
+    amendments = extract_constitution(raw, texts)
+    amend = args.out.parent / "amendments" / "constitution.jsonl"
+    amend.parent.mkdir(parents=True, exist_ok=True)
+    with amend.open("w", encoding="utf-8") as f:
+        for a in amendments:
+            f.write(json.dumps(a.as_dict(), ensure_ascii=False) + "\n")
+    report["amendments"] = len(amendments)
+    report["amendments_dated"] = sum(bool(a.effective) for a in amendments)
     print(json.dumps(report, indent=1))
     return 0
 

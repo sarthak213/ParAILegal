@@ -16,6 +16,7 @@ IPC s.498A must know whether the law it applied still reads the same, and what r
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,8 +106,8 @@ def law_at_time(judgment: dict, engine: Any, history: History, limit: int = 8) -
                                        *(d["ref"] for d in first.get("derived_links") or [])]))
         if status == "repealed":
             item.status_today = f"repealed; replaced by {first.get('replaced_by')}" if first.get("replaced_by") else "repealed"
-        elif status == "omitted":
-            item.status_today = "omitted"
+        elif status == "omitted" or re.search(r"^\W*[^.—]{0,120}[.—]*\s*Omitted by\b", current[:200]):
+            item.status_today = "omitted"  # an omitted article is kept as "Compulsory acquisition ...—Omitted by ..."
         else:
             item.status_today = "in force"
         item.note = _note(item, decided)
@@ -133,4 +134,6 @@ def _note(item: ProvisionThen, decided: str) -> str:
     if item.status_today.startswith("repealed"):
         now = ", ".join(_label(r) for r in item.now) if item.now else ""
         today = f" Now {item.status_today}" + (f" ({now})." if now else ".")
+    elif item.status_today == "omitted":
+        today = " Now omitted."
     return f"Decided on {decided} under {label}. {since}{gaps}{today}"

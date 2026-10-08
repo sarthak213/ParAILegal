@@ -73,7 +73,8 @@ class Amendment:
         return asdict(self)
 
 
-_NUMBERED = re.compile(r"^\s*(\d{1,2})\.\s+\S")
+# "1. Subs. by ...", and "2 Ins. by ..." (the Constitution PDF sometimes drops the full stop)
+_NUMBERED = re.compile(r"^\s*(\d{1,2})(?:\.\s+\S|\s+(?=[A-Z]))")
 _AMENDING_WORDS = re.compile(r"\b(?:Ins|Subs|Omitted|Om|Rep|Added|Inserted|Substituted|ibid)\b\.?|\bby\s+(?:the\s+)?(?:Act|A\.\s?O\.)|"
                              r"w\.\s?e\.\s?f\.|\bNotifn\b|\bvide\b", re.IGNORECASE)
 _PAGE_TAIL = re.compile(r"^\s*(?:IndiaCode|\d{1,4})?\s*$")
@@ -104,7 +105,7 @@ def _footnotes(page: str) -> tuple[str, dict[int, str]]:
         m = _NUMBERED.match(line)
         if m:
             current = int(m.group(1))
-            notes[current] = line[line.index(".", m.start(1)) + 1:].strip()
+            notes[current] = line[m.end(1):].lstrip(" .").strip()  # after "2." or "2"
         elif current is not None and line.strip():
             notes[current] += " " + line.strip()
     body = "\n".join(lines[:cut]).rstrip()
@@ -171,7 +172,8 @@ def dating(note: str, by: str, action: str = "") -> tuple[str | None, str, int |
 
 
 _MARK = re.compile(r"(?<![\w\]])(\d{1,2})\[")
-_HEADING = re.compile(r"^\s*(\d{1,3}[A-Z]{0,3})\.\s?(?=[A-Z“\"(\[])", re.M)
+# a section or article heading; its title may itself be amended: "368. 1[Power of Parliament ..."
+_HEADING = re.compile(r"^\s*(\d{1,3}[A-Z]{0,3})\.\s?(?=[A-Z“\"(\[]|\d{1,2}\[)", re.M)
 # section headings inside an amended span ("1[CHAPTER XXA ... 498A. Husband ...]")
 _HEADING_IN_SPAN = re.compile(r"(?:^|\s)(\d{1,3}[A-Z]{0,3})\.\s?(?=[A-Z][a-z])")
 
@@ -237,6 +239,48 @@ def extract(act: str, raw: str) -> list[Amendment]:
     return out
 
 
+_ORDINALS = ["FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH", "SEVENTH", "EIGHTH", "NINTH", "TENTH",
+             "ELEVENTH", "TWELFTH"]
+_SCHEDULE_HEAD = re.compile(rf"^\s*(?:\d{{1,2}}\[)?(?:THE\s+)?({'|'.join(_ORDINALS)})\s+SCHEDULE\b", re.M)
+_SCHEDULE_ARTICLES = re.compile(r"^\s*\[Articles? [^\]]{1,120}\]\s*$", re.M)  # "[Articles 1 and 4]" under a heading
+_APPENDIX_HEAD = re.compile(r"^\s*APPENDIX\s+([IVX]+)\s*$", re.M)
+
+
+def extract_constitution(raw: str, articles: dict[str, str]) -> list[Amendment]:
+    """The Constitution's amendment history, act code "ART": its footnotes as for an Act, then
+    those on a Schedule's pages filed under it ("SCHEDULE_6": the Sixth Schedule's paragraphs are
+    numbered 1, 2, ... like articles), and each refiled under the article whose words it has.
+
+    The Schedules start after article 395; a Schedule is found by its heading ("SIXTH SCHEDULE"),
+    or, where the PDF text lost the heading, by the "[Articles ...]" line beneath it."""
+    out = extract("ART", raw)
+    pages = raw.split("\f")
+    start = next((i for i, p in enumerate(pages) if re.search(r"(?m)^\s*395\.\s?Repeals\.\s?[—-]", p)), len(pages))
+    marks: list[tuple[int, str]] = []  # (page, section) where each Schedule or Appendix begins
+    number = 0
+    for i in range(start, len(pages)):
+        found = sorted([(m.start(), "head", m.group(1)) for m in _SCHEDULE_HEAD.finditer(pages[i])] +
+                       [(m.start(), "articles", "") for m in _SCHEDULE_ARTICLES.finditer(pages[i])] +
+                       [(m.start(), "appendix", m.group(1)) for m in _APPENDIX_HEAD.finditer(pages[i])])
+        last_head = -1000
+        for pos, kind, name in found:
+            if kind == "head":
+                number, last_head = _ORDINALS.index(name) + 1, pos
+                marks.append((i + 1, f"SCHEDULE_{number}"))
+            elif kind == "articles" and pos - last_head > 200 and number < 12:
+                number += 1  # a Schedule whose heading the text lost
+                marks.append((i + 1, f"SCHEDULE_{number}"))
+            elif kind == "appendix":
+                marks.append((i + 1, f"APPENDIX_{['I', 'II', 'III', 'IV', 'V'].index(name) + 1}"))
+                number = 12
+    for a in out:
+        within = [section for page, section in marks if page <= a.page]
+        if within:
+            a.section = within[-1]
+    reattribute(out, articles)
+    return out
+
+
 _WORDS = re.compile(r"[a-z0-9]+")
 
 
@@ -270,7 +314,9 @@ def _sections_in_note(note: str) -> list[str]:
 
 
 def _section_before(text: str, pos: int) -> str:
-    heads = list(_HEADING.finditer(text, 0, pos))
+    # a few characters past pos, so a heading whose title is itself marked ("368. 1[Power ...") can be
+    # seen; only headings that start before pos count
+    heads = [h for h in _HEADING.finditer(text, 0, pos + 4) if h.start() < pos]
     return heads[-1].group(1) if heads else ""
 
 

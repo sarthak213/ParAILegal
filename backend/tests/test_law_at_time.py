@@ -65,3 +65,17 @@ def test_an_earlier_wording_from_an_archived_copy(tmp_path):
     [p] = law_at_time(judgment("1950-06-01", "IPC 302"), Engine(), History(directory=tmp_path))
     assert "transportation for life" in p.text_then and p.complete
     assert "Earlier wording taken from an archived India Code copy saved 2007-08-21, not the Gazette." in p.note
+
+
+def test_an_omitted_article():
+    class Constitution:
+        def provision(self, ref):
+            return [{"section_title": "Compulsory acquisition of property", "status": "in force",
+                     "text": "Compulsory acquisition of property..—Omitted by the Constitution (Forty-fourth Amendment) "
+                             "Act, 1978, s. 6 (w.e.f. 20-6-1979)."}]
+    h = History(directory=__import__("pathlib").Path("does-not-exist"))
+    h.by_section[("ART", "31")].append(Amendment("ART", "31", 1, 1, "omitted", "Constitution (Forty-fourth Amendment) "
+                                                 "Act, 1978", "1979-06-20", "", None, "Omitted by ..."))
+    [p] = law_at_time(judgment("1975-11-07", "ART 31"), Constitution(), h)
+    assert p.status_today == "omitted" and p.note.endswith("Now omitted.")
+    assert "omitted by Constitution (Forty-fourth Amendment) Act, 1978 from 1979-06-20" in p.note
