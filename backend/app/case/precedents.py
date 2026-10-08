@@ -110,8 +110,10 @@ What it was about:
 What it held:
 {held}
 
-List up to three ways the facts are alike ("similar") and up to three ways they differ ("different"). A point
-must be true of both texts as written: do not call something alike unless both texts say it. For each, give a
+List up to three ways the facts are alike ("similar") and up to three ways they differ ("different"). Compare
+what happened (who did what, to whom, how, with what result), not the charges, sections or the court's
+procedure: our case has not been charged or tried. A point must be true of both texts as written: do not call
+something alike unless both texts say it, and do not add anything our case does not say. For each, give a
 short point (under 20 words), then copy the exact words from our case ("our_fact") and from the judgment ("their_fact")
 that show it; use "" for a side that says nothing about it. Then in one or two sentences ("bearing") say how
 the judgment's principle could still apply to our case, or why it may be distinguished. Use only the texts above."""
@@ -123,12 +125,16 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text.lower())
 
 
-def check_points(points: list[dict], ours: str, theirs: str) -> tuple[list[dict], int]:
-    """Points whose quotes are in the texts they claim to come from; the count of points dropped."""
+def check_points(points: list[dict], ours: str, theirs: str, both: bool = False) -> tuple[list[dict], int]:
+    """Points whose quotes are in the texts they claim to come from; the count of points dropped.
+    both: each point must quote both texts, as a likeness must ("both were charged under s.306"
+    with nothing from our facts is a likeness the facts do not show)."""
     a, b = _norm(ours), _norm(theirs)
     kept = []
     for p in points:
         our, their = (p.get("our_fact") or "").strip(), (p.get("their_fact") or "").strip()
+        if both and not (our and their):
+            continue
         if (our or their) and (not our or _norm(our) in a) and (not their or _norm(their) in b):
             kept.append({"point": p.get("point", "").strip(), "our_fact": our, "their_fact": their})
     return kept, len(points) - len(kept)
@@ -142,7 +148,7 @@ async def compare(facts: str, record: dict, base_url: str) -> dict:
                                    catch=catch, held=held_text)
     reply = await complete_json(base_url, [{"role": "user", "content": prompt}], COMPARE_SCHEMA, max_tokens=900)
     theirs = f"{catch}\n{held_text}"
-    similar, dropped_a = check_points(reply.get("similar", [])[:3], facts, theirs)
+    similar, dropped_a = check_points(reply.get("similar", [])[:3], facts, theirs, both=True)
     different, dropped_b = check_points(reply.get("different", [])[:3], facts, theirs)
     bearing = (reply.get("bearing") or "").strip()
     if bearing and not bearing.endswith((".", "?", "!")) and "." in bearing:

@@ -426,6 +426,8 @@ async def _stream_v2(rag, query: str, domain: str | None, mode: str | None, prev
         yield _sse({"type": "done", "answer": p.fallback, "citations": citations(p.evidence)})
         return
 
+    if hasattr(rag, "free_for_answers"):
+        rag.free_for_answers()  # the Case Builder's model, if loaded: one model at a time
     if not rag.answerer.ready:
         yield _sse({"type": "status", "stage": "loading"})  # first answer: the model is loading
     pieces: list[str] = []

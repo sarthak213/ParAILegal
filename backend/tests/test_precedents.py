@@ -47,3 +47,12 @@ def test_evidence_text_for_the_brief():
     text = evidence_text(MODERN, comparison, ["Decided on 2023-07-05 under IPC s.302. ..."], status)
     assert "Facts similar: a child is the only eyewitness" in text and "Facts different: here" in text
     assert "Law at the time: Decided on 2023-07-05" in text and "Caution: noted as overruled in X v. Y" in text
+
+
+def test_a_likeness_must_quote_both_texts():
+    ours, theirs = "The in-laws taunted her daily. She hanged herself.", "Victim committed suicide by hanging herself."
+    kept, dropped = check_points([
+        {"point": "both died by hanging", "our_fact": "She hanged herself", "their_fact": "hanging herself"},
+        {"point": "both charged under s.306", "our_fact": "", "their_fact": "Victim committed suicide"},
+    ], ours, theirs, both=True)
+    assert [p["point"] for p in kept] == ["both died by hanging"] and dropped == 1

@@ -31,6 +31,7 @@ class SearchService:
         self.engine = None
         self.queryRouter = None
         self.answerer = None
+        self.case_server: LlamaServer | None = None  # the Case Builder's model, when it differs
         self.judgments: JudgmentStore | None = None
         self.history: History | None = None
 
@@ -63,7 +64,29 @@ class SearchService:
                 asyncio.create_task(self._preload())
         else:
             print(f"No answer model at {server.model}: answers list the matching provisions.")
+        case = LlamaServer(s.LLM_ENGINE_DIR, s.CASE_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
+                           s.LLM_CTX, s.LLM_IDLE_UNLOAD_S, s.LLM_DEVICE)
+        if case.installed and case.model != server.model:
+            self.case_server = case
+            print(f"Case Builder model: {case.model.name}")
         return True
+
+    async def case_model(self) -> LlamaServer:
+        """The Case Builder's model, running; the answer model is stopped first (one at a time).
+        Raises RuntimeError when no model is installed or it cannot start."""
+        server = self.case_server or (self.answerer.server if self.answerer else None)
+        if server is None:
+            raise RuntimeError("No answer model is installed; the Case Builder needs one for this step")
+        if server is self.case_server and self.answerer is not None:
+            self.answerer.server.stop()
+        await server.ensure_running()
+        server.touch()
+        return server
+
+    def free_for_answers(self) -> None:
+        """Stop the Case Builder's model before an answer loads the answer model (one at a time)."""
+        if self.case_server is not None:
+            self.case_server.stop()
 
     async def _preload(self) -> None:
         try:
@@ -74,11 +97,16 @@ class SearchService:
     def model_status(self) -> dict:
         if self.answerer is None:
             return {"state": "not_installed"}
-        return self.answerer.server.status()
+        status = self.answerer.server.status()
+        if self.case_server is not None:
+            status["case_model"] = self.case_server.status()
+        return status
 
     async def aclose(self) -> None:
         if self.answerer:
             await self.answerer.aclose()
+        if self.case_server is not None:
+            self.case_server.stop()
 
     def search(self, query: str, k: int | None = None, domain: str | None = None) -> list[dict]:
         """Synchronous; routes call it through asyncio.to_thread."""
@@ -98,6 +126,7 @@ class SearchService:
         if p.outcome == SOURCES_ONLY or self.answerer is None:
             answer = p.fallback
         else:
+            self.free_for_answers()
             text, v = verify("".join([t async for t in self.answerer.stream(p)]), p.evidence, p.question)
             answer, verification = finish(text), v.to_dict()
         return {

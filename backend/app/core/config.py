@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     LLM_CTX:             int   = 8192
     LLM_IDLE_UNLOAD_S:   float = 600    # stop the model after 10 idle minutes, freeing ~3 GB
     LLM_PRELOAD:         bool  = False  # load the model at start-up instead of on the first answer
+    # the Case Builder's model (facts, elements, comparisons, brief): the 9B made fewer factual slips in
+    # fact comparisons than the 4B, at about twice the time; the answer model is used if this file is missing.
+    # One model is loaded at a time: switching between Research and the Case Builder swaps them.
+    CASE_MODEL_PATH:     Path  = MODELS_DIR / "llm" / "Qwen3.5-9B-Q4_K_M.gguf"
 
     TOP_K_SEARCH:        int   = 15
     TOP_K_ANSWER:        int   = 5
