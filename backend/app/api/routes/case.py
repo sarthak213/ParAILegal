@@ -138,7 +138,10 @@ async def compare(body: CompareRequest, rag=Depends(get_rag_system)) -> dict:
     record = await asyncio.to_thread(_judgments(rag).record, body.id)
     if record is None:
         raise HTTPException(404, f"No judgment {body.id}")
-    return await precedents.compare(body.facts, record, await _model_url(rag))
+    try:
+        return await precedents.compare(body.facts, record, await _model_url(rag))
+    except RuntimeError as e:  # the model failed or stopped mid-reply: say so, rather than a bare 500
+        raise HTTPException(503, f"The comparison could not be made: {e}") from e
 
 
 def _precedent_evidence(rag, items: list[Precedent], start: int) -> list[Evidence]:
