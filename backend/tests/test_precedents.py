@@ -56,3 +56,68 @@ def test_a_likeness_must_quote_both_texts():
         {"point": "both charged under s.306", "our_fact": "", "their_fact": "Victim committed suicide"},
     ], ours, theirs, both=True)
     assert [p["point"] for p in kept] == ["both died by hanging"] and dropped == 1
+
+
+def test_shortened_quotes_count_and_points_about_the_proceedings_do_not():
+    from app.case.precedents import quoted, _norm
+
+    theirs = "P.W.1 deposed about the demand. The respondent asked him to pay at least Rs. 10,000 in the hotel."
+    assert quoted("asked him to pay at least Rs. 10,000... in the hotel", _norm(theirs))
+    assert not quoted("in the hotel... asked him to pay", _norm(theirs))  # pieces out of order
+    points = [
+        {"point": "A public servant demanded money to approve an official act.",
+         "our_fact": "asked the complainant for Rs. 10,000", "their_fact": "asked him to pay at least Rs. 10,000... in the hotel"},
+        {"point": "The judgment discusses an acquittal by the High Court.", "our_fact": "", "their_fact": "P.W.1 deposed about the demand"},
+    ]
+    kept, dropped = check_points(points, "The clerk asked the complainant for Rs. 10,000 to approve his plan.", theirs)
+    assert [p["point"] for p in kept] == [points[0]["point"]] and dropped == 1
+
+
+def test_the_check_drops_likenesses_untrue_of_either_text():
+    from app.case.precedents import apply_checks
+
+    result = {"similar": [{"point": "a"}, {"point": "b"}, {"point": "c"}], "different": [{"point": "d"}],
+              "bearing": "", "dropped": 2}
+    out = apply_checks(result, {"checks": [{"n": 1, "ours": "yes", "theirs": "yes"}, {"n": 2, "ours": "no", "theirs": "yes"},
+                                           {"n": 3, "ours": "yes", "theirs": "no"}]})
+    assert [p["point"] for p in out["similar"]] == ["a"] and out["dropped"] == 4
+    assert out["different"] == result["different"]  # differences are not checked
+    assert apply_checks(result, {})["similar"] == result["similar"]  # no check reply: nothing dropped
+
+
+def test_a_long_headnote_is_cut_to_fit_the_model():
+    from app.case.precedents import HOLDINGS_CHARS, _clip
+
+    text = "The Court held this. " * 200
+    assert len(_clip(text, 1500)) <= 1500 and _clip(text, 1500).endswith(".")
+    assert HOLDINGS_CHARS < 8192 * 3  # well inside the model's context, with the facts and the reply
+
+
+def test_the_brief_reads_each_point_with_its_quotes():
+    comparison = {"similar": [{"point": "both died by hanging", "our_fact": "She hanged herself",
+                               "their_fact": "hanging herself"}], "different": [], "bearing": ""}
+    text = evidence_text(MODERN, comparison, [], {})
+    assert 'Facts similar: both died by hanging (our facts: "She hanged herself"; the judgment: "hanging herself")' in text
+
+
+def test_a_quote_may_correct_a_scan_but_not_change_the_words():
+    from app.case.precedents import _norm, quoted
+
+    scan = _norm("which had the effect of creating an intimidatig or hostile working environment f11r her. "
+                 "Altercation between the c parties resulted in fatal blow to victim")
+    assert quoted("had the effect of creating an intimidating or hostile working environment for her", scan)
+    assert quoted("Altercation between the parties resulted in fatal blow to victim", scan)
+    assert not quoted("had the effect of creating a friendly and supportive working environment for her", scan)
+    assert not quoted("the c partys", scan)  # short: exact only
+
+
+def test_a_likeness_cannot_lend_one_case_the_others_people():
+    ours = "Rakesh and his mother demanded a car from the wife's parents and beat her."
+    theirs = "The husband and father-in-law demanded money from her and tormented her."
+    kept, dropped = check_points([
+        {"point": "In both, the husband and father-in-law demanded money.", "our_fact": "Rakesh and his mother demanded a car",
+         "their_fact": "The husband and father-in-law demanded money"},
+        {"point": "In both, money was demanded from the woman.", "our_fact": "demanded a car",
+         "their_fact": "demanded money from her"},
+    ], ours, theirs, both=True)
+    assert [p["point"] for p in kept] == ["In both, money was demanded from the woman."] and dropped == 1

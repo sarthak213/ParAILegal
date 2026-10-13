@@ -19,8 +19,11 @@ async def complete_json(base_url: str, messages: list[dict], schema: dict, max_t
         "response_format": {"type": "json_schema", "json_schema": {"name": "result", "schema": schema}},
         "chat_template_kwargs": {"enable_thinking": False},
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)) as client:
-        r = await client.post(f"{base_url}/v1/chat/completions", json=body)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)) as client:
+            r = await client.post(f"{base_url}/v1/chat/completions", json=body)
+    except httpx.HTTPError as e:  # the model server stopped or dropped the connection mid-reply
+        raise RuntimeError(f"answer model unreachable: {type(e).__name__}") from e
     if r.status_code != 200:
         raise RuntimeError(f"answer model error {r.status_code}: {r.text[:300]}")
     return json.loads(r.json()["choices"][0]["message"]["content"])
