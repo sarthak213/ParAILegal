@@ -103,16 +103,48 @@ def _opening(text: str, n: int = 7) -> list[str]:
     return [t[0] for t in _tokens(_plain(text))][:n]
 
 
+@dataclass
+class Heading:
+    """A section's number and title, to find it in a copy whose opening words have since changed."""
+    section: str
+    title: str
+
+    def words(self) -> list[str]:
+        return [self.section.lower(), *[t[0] for t in _tokens(self.title)][:6]]
+
+
+def _by_heading(cwords: list[str], heading: Heading | None, start: int = 0) -> list[int]:
+    """Where the heading's words stand: once in the body, perhaps also before it in a table of contents."""
+    if not heading or len(heading.words()) < 3:
+        return []
+    return _find(heading.words(), cwords, start)
+
+
 def _section_range(cwords: list[str], section_text: str, next_text: str | None,
-                   section: str = "") -> tuple[int, int]:
+                   section: str = "", heading: Heading | None = None,
+                   next_heading: Heading | None = None) -> tuple[int, int]:
     """Token range of a section in the copy: from where its opening words stand (today's) to where
     the next section's do; the section's number must stand just before them (a renumbered or
-    rewritten section's opening may be another's). The whole copy when that cannot be told."""
+    rewritten section's opening may be another's). When its opening has changed since, from its
+    heading ("24. Power to make rules"), if that stands once after any table of contents. The whole
+    copy when that cannot be told."""
     starts = _find(_opening(section_text), cwords)
-    if len(starts) != 1 or (section and section.lower() not in cwords[max(0, starts[0] - 25):starts[0]]):
+    if section:  # common openings ("(1) The Central Government may") stand in many sections
+        starts = [s for s in starts if section.lower() in cwords[max(0, s - 25):s]]
+    by_heading = not starts
+    if by_heading:
+        found = _by_heading(cwords, heading)
+        if len(found) == 2 and found[1] - found[0] > 200:  # the first in the contents, the second the section
+            found = found[1:]
+        starts = [found[0] + len(heading.words())] if len(found) == 1 else []
+    if len(starts) != 1:
         return 0, len(cwords)
     lo = starts[0]
     ends = _find(_opening(next_text), cwords, lo + 1) if next_text else []
+    if not ends:
+        ends = _by_heading(cwords, next_heading, lo + 1)[:1]
+    if not ends and by_heading:
+        return 0, len(cwords)  # found by its heading alone, its end must be found too
     return lo, ends[0] if ends else len(cwords)
 
 
@@ -152,7 +184,7 @@ def _structural(span: str, after: str, region: str, today: str) -> str | None:
 
 
 def earlier_words(current_section: str, a: Amendment, copy: Copy, next_section: str | None = None,
-                  context: int = 8) -> str | None:
+                  context: int = 8, headings: tuple[Heading | None, Heading | None] = (None, None)) -> str | None:
     """The words the span replaced, as the copy has them; None when they cannot be placed for sure."""
     span = _plain(a.new_text)
     now = _plain(current_section)
@@ -167,7 +199,7 @@ def earlier_words(current_section: str, a: Amendment, copy: Copy, next_section: 
     if len(at) != 1:
         return None  # the span is not in today's section, or not once
     i, j = at[0], min(at[0] + len(span_words), len(now_words))
-    lo, hi = _section_range(cwords, current_section, next_section, a.section)
+    lo, hi = _section_range(cwords, current_section, next_section, a.section, *headings)
 
     def accept(old: str) -> str | None:
         old = _tidy(old)
@@ -286,7 +318,7 @@ def unquoted_words(note: str) -> str | None:
 
 
 # a label quoted inside a sentence ("under sub-section (4) of section 44") is a reference, not a unit's start
-_REFERENCE = re.compile(r"(?:sub-?sections?|sub-?clauses?|clauses?|sections?|items?|rules?|articles?|paragraphs?)"
+_REFERENCE = re.compile(r"(?:sub-?\s?sections?|sub-?\s?clauses?|clauses?|sections?|items?|rules?|articles?|paragraphs?)"
                         r"\s*\S?$", re.IGNORECASE)  # not "and": a list of clauses ends "...; and (c)"
 
 
@@ -306,11 +338,16 @@ def _next_unit(pattern: re.Pattern, region: str, pos: int, unit: str = "") -> in
     return len(region)
 
 
-def earlier_unit(current_section: str, unit: str, copy: Copy, next_section: str | None, section: str) -> str | None:
+# a proviso or Explanation that goes on into its own list of items
+_LEAD_IN = re.compile(r"(?:[—–:-]|�|\b(?:of|if|to|namely|means|includes|whether)[,—–:\s-]*�?)\s*$")
+
+
+def earlier_unit(current_section: str, unit: str, copy: Copy, next_section: str | None, section: str,
+                 headings: tuple[Heading | None, Heading | None] = (None, None)) -> str | None:
     """The unit as the copy has it: from its label to the next label of the same kind (or the end of
     the section); a proviso or Explanation only when the copy's section has just the one."""
     cwords = [t[0] for t in _tokens(copy.text)]
-    lo, hi = _section_range(cwords, current_section, next_section, section)
+    lo, hi = _section_range(cwords, current_section, next_section, section, *headings)
     if (lo, hi) == (0, len(cwords)):
         return None  # the section's place in the copy is not known for sure
     ctoks = _tokens(copy.text)
@@ -323,8 +360,13 @@ def earlier_unit(current_section: str, unit: str, copy: Copy, next_section: str 
         start = hits[0].start()
         nxt = re.compile(r"(?:^|\s)\(\s*(?:\d{1,3}[A-Z]?|[a-z]{1,2})\s*\)\s|(?<![\w(])(?:Provided|Explanation)\b")
         end = _next_unit(nxt, region, hits[0].end())
+        if _LEAD_IN.search(region[start:end]):  # "...shall not apply to the distribution of— (a) ... (b) ..."
+            nxt = re.compile(r"(?:^|\s)\(\s*\d{1,3}[A-Z]?\s*\)\s|(?<![\w(])(?:Provided|Explanation)\b")
+            end = _next_unit(nxt, region, hits[0].end())
     else:
-        hits = [m for m in re.finditer(rf"(?:^|\s){re.escape(unit)}\s", region) if not _REFERENCE.search(region[:m.start() + 1])]
+        # "sub-section (6) of section 9B": a reference, though the scan broke "sub- section" or lost the word
+        hits = [m for m in re.finditer(rf"(?:^|\s){re.escape(unit)}\s", region)
+                if not _REFERENCE.search(region[:m.start() + 1]) and not region.startswith("of ", m.end())]
         if len(hits) != 1:
             return None
         start = hits[0].start()
@@ -340,12 +382,18 @@ def earlier_unit(current_section: str, unit: str, copy: Copy, next_section: str 
     return old
 
 
-def fill(amendments: list[Amendment], sections: dict[str, str], copies: list[Copy]) -> list[Filled]:
-    """Earlier wordings for the substitutions that lack them. sections: today's text of each section."""
+def fill(amendments: list[Amendment], sections: dict[str, str], copies: list[Copy],
+         titles: dict[str, str] | None = None) -> list[Filled]:
+    """Earlier wordings for the substitutions and omissions that lack them. sections: today's text of
+    each section; titles: their titles, to find a section whose opening words have changed."""
     out = []
     by_age = sorted(copies, key=lambda c: c.saved, reverse=True)
     order = list(sections)  # document order
     following = {sec: sections[order[k + 1]] for k, sec in enumerate(order[:-1])}
+    titles = titles or {}
+    heading = {sec: Heading(sec, titles[sec]) for sec in order if titles.get(sec)}
+    around = {sec: (heading.get(sec), heading.get(order[k + 1]) if k + 1 < len(order) else None)
+              for k, sec in enumerate(order)}
     for a in amendments:
         if a.old_text is not None or a.section not in sections:
             continue
@@ -358,7 +406,8 @@ def fill(amendments: list[Amendment], sections: dict[str, str], copies: list[Cop
             if len(units) != 1:
                 continue  # several units ("clauses (c) and (d)"), or none named: not placed for sure
             for copy in (c for c in by_age if predates(c, a)):
-                old = earlier_unit(sections[a.section], units[0], copy, following.get(a.section), a.section)
+                old = earlier_unit(sections[a.section], units[0], copy, following.get(a.section), a.section,
+                                   around[a.section])
                 if old:
                     out.append(Filled(a.act, a.section, a.by, a.note, old,
                                       f"archived India Code copy saved {copy.saved}", units[0]))
@@ -367,7 +416,7 @@ def fill(amendments: list[Amendment], sections: dict[str, str], copies: list[Cop
         if a.action != SUBSTITUTED:
             continue
         for copy in (c for c in by_age if predates(c, a)):
-            old = earlier_words(sections[a.section], a, copy, following.get(a.section))
+            old = earlier_words(sections[a.section], a, copy, following.get(a.section), headings=around[a.section])
             if old:
                 out.append(Filled(a.act, a.section, a.by, a.note, old,
                                   f"archived India Code copy saved {copy.saved}"))

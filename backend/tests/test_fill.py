@@ -141,3 +141,38 @@ def test_a_fill_stops_at_the_next_section_and_sub_clauses_stay_in_their_clause()
     today = 'In this Act,— (m) "wages" includes any privilege; (o) "zone" means an area.'
     assert earlier_unit(today, "(n)", copy, "The employer shall pay.", "2") == (
         '(n) "workman" means any person who is- (i) a railway servant; or (ii) employed on monthly wages')
+
+
+def test_a_proviso_keeps_its_list_and_a_broken_reference_is_not_a_unit():
+    from app.history.fill import earlier_unit
+
+    raw = ("\n      3. Innocent publication.- (1) A person shall not be guilty of contempt. (2) No person shall be guilty"
+           " of contempt: Provided that this sub-section shall not apply to the distribution of- (i) any book;"
+           " (ii) any newspaper. (3) Nothing in this section applies.\n"
+           "      4. Fair report.- Subject to section 7, a person is not guilty.\n")
+    copy = read_copy(raw, "2006-03-05")
+    today = "(1) A person shall not be guilty of contempt. (2) No person shall be guilty of contempt. (3) Nothing."
+    assert earlier_unit(today, "proviso", copy, "Subject to section 7, a person is not guilty.", "3") == (
+        "Provided that this sub-section shall not apply to the distribution of- (i) any book; (ii) any newspaper.")
+
+    raw = ("\n      13. Power to make rules.- (1) The Government may make rules. (2) Such rules may provide for-"
+           " (qqa) the manner under sub- section (6) of section 9B; (qqb) the usage of funds.\n"
+           "      14. Sections not to apply.- The provisions do not apply.\n")
+    copy = read_copy(raw, "2015-01-01")
+    today = "(1) The Government may make rules. (2) Such rules may provide for— (qqb) the usage of funds."
+    assert earlier_unit(today, "(6)", copy, "The provisions do not apply.", "13") is None
+
+
+def test_a_section_whose_opening_changed_is_found_by_its_heading():
+    from app.history.fill import Heading, earlier_unit
+
+    contents = "\n      ARRANGEMENT OF SECTIONS 12. Power to inspect. 13. Penalty.\n" + " filler words here" * 80
+    raw = (contents + "\n      12. Power to inspect.- (1) Any officer may enter premises. (2) The officer may"
+           " seize records found there. (3) Every search shall be made in the presence of two witnesses.\n"
+           "      13. Penalty.- Whoever obstructs shall be punished.\n")
+    copy = read_copy(raw, "2006-03-05")
+    today = "(1) Any officer authorised by the Board may enter and search premises. (2) The officer may seize records."
+    heads = (Heading("12", "Power to inspect."), Heading("13", "Penalty."))
+    assert earlier_unit(today, "(3)", copy, "Whoever obstructs shall be punished.", "12") is None  # opening changed
+    assert earlier_unit(today, "(3)", copy, "Whoever obstructs shall be punished.", "12", heads) == (
+        "(3) Every search shall be made in the presence of two witnesses.")

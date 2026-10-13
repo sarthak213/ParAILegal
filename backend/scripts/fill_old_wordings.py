@@ -51,10 +51,12 @@ def main() -> int:
         amendments = [Amendment(**json.loads(x)) for x in amend.read_text(encoding="utf-8").splitlines()]
         gaps = Counter(a.action for a in amendments if a.action in (SUBSTITUTED, OMITTED) and a.old_text is None)
         sections: dict[str, str] = {}
+        titles: dict[str, str] = {}
         for x in statute.read_text(encoding="utf-8").splitlines():
             r = json.loads(x)
             sections[r["section_number"]] = sections.get(r["section_number"], "") + " " + (r.get("text") or "")
-        found = fill(amendments, sections, copies_of(archive / code, entry))
+            titles.setdefault(r["section_number"], r.get("section_title") or "")
+        found = fill(amendments, sections, copies_of(archive / code, entry), titles)
         stats.update({f"gaps {k}": v for k, v in gaps.items()})
         stats.update(f"filled {'omitted' if f.unit or f.source == 'the footnote' else 'substituted'}" for f in found)
         lines += [json.dumps(f.__dict__, ensure_ascii=False) for f in found]
