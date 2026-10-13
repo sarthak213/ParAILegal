@@ -107,3 +107,15 @@ def test_constitution_footnotes_without_a_full_stop_and_amended_titles():
     am = {(a.section, a.action, a.effective) for a in extract("ART", page)}
     assert ("21A", INSERTED, "2010-04-01") in am         # "2 Ins." read, though it has no full stop
     assert ("368", SUBSTITUTED, "1971-11-05") in am      # "368. 1[Power ..." is still article 368's heading
+
+
+def test_an_omitted_unit_is_put_back_in_its_place():
+    from app.history.amendments import _restore
+    text = "(1) In this Act— (a) x means y; (c) z means w. (2) More."
+    assert _restore(text, "(b)", "(b) q means r;") == "(1) In this Act— (a) x means y; (b) q means r; (c) z means w. (2) More."
+    # the last of its series goes after the one before it, ahead of the next sub-section
+    assert _restore(text, "(d)", "(d) v means u.") == "(1) In this Act— (a) x means y; (c) z means w. (d) v means u. (2) More."
+    assert _restore(text, "proviso", "Provided that p.").endswith("(2) More. Provided that p.")
+    assert _restore(text, "(ia)", "(ia) t.") is None  # where "(ia)" stood is not certain
+    starred = "(a) x means y; * * * * * (c) z means w."
+    assert _restore(starred, "(b)", "(b) q means r;") == "(a) x means y; (b) q means r; (c) z means w."

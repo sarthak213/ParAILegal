@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.history.amendments import SUBSTITUTED, Amendment, _plain
+from app.history.amendments import OMITTED, SUBSTITUTED, Amendment, _plain
 
 _ACT_CITED = re.compile(r"\bAct\s+(?:No\.\s*)?(\d{1,3})\s+of\s+(\d{4})", re.IGNORECASE)
 _NAMED_ACT_YEAR = re.compile(r"\b[A-Z][A-Za-z()&,' -]{3,120}?Act,?\s+(\d{4})")
@@ -103,16 +103,48 @@ def _opening(text: str, n: int = 7) -> list[str]:
     return [t[0] for t in _tokens(_plain(text))][:n]
 
 
+@dataclass
+class Heading:
+    """A section's number and title, to find it in a copy whose opening words have since changed."""
+    section: str
+    title: str
+
+    def words(self) -> list[str]:
+        return [self.section.lower(), *[t[0] for t in _tokens(self.title)][:6]]
+
+
+def _by_heading(cwords: list[str], heading: Heading | None, start: int = 0) -> list[int]:
+    """Where the heading's words stand: once in the body, perhaps also before it in a table of contents."""
+    if not heading or len(heading.words()) < 3:
+        return []
+    return _find(heading.words(), cwords, start)
+
+
 def _section_range(cwords: list[str], section_text: str, next_text: str | None,
-                   section: str = "") -> tuple[int, int]:
+                   section: str = "", heading: Heading | None = None,
+                   next_heading: Heading | None = None) -> tuple[int, int]:
     """Token range of a section in the copy: from where its opening words stand (today's) to where
     the next section's do; the section's number must stand just before them (a renumbered or
-    rewritten section's opening may be another's). The whole copy when that cannot be told."""
+    rewritten section's opening may be another's). When its opening has changed since, from its
+    heading ("24. Power to make rules"), if that stands once after any table of contents. The whole
+    copy when that cannot be told."""
     starts = _find(_opening(section_text), cwords)
-    if len(starts) != 1 or (section and section.lower() not in cwords[max(0, starts[0] - 25):starts[0]]):
+    if section:  # common openings ("(1) The Central Government may") stand in many sections
+        starts = [s for s in starts if section.lower() in cwords[max(0, s - 25):s]]
+    by_heading = not starts
+    if by_heading:
+        found = _by_heading(cwords, heading)
+        if len(found) == 2 and found[1] - found[0] > 200:  # the first in the contents, the second the section
+            found = found[1:]
+        starts = [found[0] + len(heading.words())] if len(found) == 1 else []
+    if len(starts) != 1:
         return 0, len(cwords)
     lo = starts[0]
     ends = _find(_opening(next_text), cwords, lo + 1) if next_text else []
+    if not ends:
+        ends = _by_heading(cwords, next_heading, lo + 1)[:1]
+    if not ends and by_heading:
+        return 0, len(cwords)  # found by its heading alone, its end must be found too
     return lo, ends[0] if ends else len(cwords)
 
 
@@ -152,7 +184,7 @@ def _structural(span: str, after: str, region: str, today: str) -> str | None:
 
 
 def earlier_words(current_section: str, a: Amendment, copy: Copy, next_section: str | None = None,
-                  context: int = 8) -> str | None:
+                  context: int = 8, headings: tuple[Heading | None, Heading | None] = (None, None)) -> str | None:
     """The words the span replaced, as the copy has them; None when they cannot be placed for sure."""
     span = _plain(a.new_text)
     now = _plain(current_section)
@@ -167,7 +199,7 @@ def earlier_words(current_section: str, a: Amendment, copy: Copy, next_section: 
     if len(at) != 1:
         return None  # the span is not in today's section, or not once
     i, j = at[0], min(at[0] + len(span_words), len(now_words))
-    lo, hi = _section_range(cwords, current_section, next_section, a.section)
+    lo, hi = _section_range(cwords, current_section, next_section, a.section, *headings)
 
     def accept(old: str) -> str | None:
         old = _tidy(old)
@@ -203,11 +235,29 @@ def earlier_words(current_section: str, a: Amendment, copy: Copy, next_section: 
 
 
 _STRAY_NOTE = re.compile(r"(?<=[a-z,]) \d{1,2} (?=[a-z])")  # "specified 1 therein": a footnote number
+# a number that is part of the words: "sections 39 and 40", "rule 5 or 6", "Schedule 2 to"
+_CITED_NUMBER = re.compile(r"(?:sections?|articles?|rules?|items?|paragraphs?|forms?|chapters?|schedules?|regulations?"
+                           r"|entry|entries|\d{1,3}[A-Z]?\s+(?:and|or|to))$", re.IGNORECASE)
+
+
+# a section heading after a finished sentence ("... or with both. 43. Penalty for"), or a chapter's
+_NEXT_HEADING = re.compile(r"(?<=[.;:])\s+\d{1,3}[A-Z]{0,3}\.\s+[A-Z]|\sCHAP(?:TER)?\b")
+
+
+def _stray(m: re.Match) -> str:
+    return m.group(0) if _CITED_NUMBER.search(m.string[max(0, m.start() - 20):m.start()]) else " "
 
 
 def _tidy(old: str) -> str:
-    """Without footnote numbers left in the words, or the next clause's opening bracket."""
-    old = _STRAY_NOTE.sub(" ", old)
+    """Without footnote numbers left in the words, India Code's "**" for words since omitted, or the next
+    clause's opening bracket."""
+    old = _STRAY_NOTE.sub(_stray, old)
+    old = re.sub(r"(?<=\),) \d{1,2} (?=\()", " ", old)  # in a list of labels: "(5), 2 (6)"
+    heading = _NEXT_HEADING.search(old)  # ran on into the next section ("... both. 43. Penalty for ...")
+    if heading and not _CITED_NUMBER.search(old[max(0, heading.start() - 20):heading.start()]):
+        old = old[:heading.start()]
+    old = re.sub(r"(?<=[.;:)])\s+\d{1,3}[A-Z]?\s*$", "", old)  # a footnote number after the last words
+    old = re.sub(r"(?:\s*\*\s*\*)+\s*\.?\s*$", "", old)
     old = re.sub(r"\s*\(\s*$", "", old).strip(" ,;:")
     return re.sub(r"\s+([,;.])", r"\1", old)
 
@@ -229,19 +279,144 @@ class Filled:
     note: str
     old_text: str
     source: str
+    unit: str = ""  # for an omission: the unit that went, "(b)", "(3)", "proviso", "Explanation"
 
 
-def fill(amendments: list[Amendment], sections: dict[str, str], copies: list[Copy]) -> list[Filled]:
-    """Earlier wordings for the substitutions that lack them. sections: today's text of each section."""
+# ── Omissions: the unit the footnote names, read from an older copy ─────────────────────────
+
+_OMITTED_UNIT = re.compile(
+    r"^(?:the\s+)?(?P<kind>sub-?clauses?|clauses?|cls?\.|sub-?sections?|sub-?ss?\.|provisos?|explanations?)\s*"
+    r"(?P<labels>(?:\(\s*[0-9a-zA-Z]{1,5}\s*\)[\s,]*(?:and|to|&)?\s*)*)"
+    r"(?:were\s+|was\s+|has\s+been\s+)?omitted\b", re.IGNORECASE)  # not "clause (c) of section 132 ... omitted"
+_LABELS = re.compile(r"\(\s*([0-9a-zA-Z]{1,5})\s*\)")
+# "The words the University omitted by ...": the words given without quotation marks
+_UNQUOTED_WORDS = re.compile(r"^(?:the\s+)?words?\s+(?P<old>(?!.*[“\"])[^,]{2,80}?)\s+(?:were\s+|was\s+)?omitted\b",
+                             re.IGNORECASE)
+
+
+def omitted_units(note: str) -> list[str]:
+    """What an omission footnote says went: ["(b)"], ["(c)", "(d)"], ["proviso"], ["Explanation"]; [] when
+    it names no unit ("Certain words omitted", "Omitted by Act ...")."""
+    m = _OMITTED_UNIT.match(note.strip())
+    if not m:
+        return []
+    kind = m.group("kind").lower()
+    if kind.startswith("proviso"):
+        return ["proviso"]
+    if kind.startswith("explanation"):
+        return ["Explanation"]
+    labels = [f"({x})" for x in _LABELS.findall(m.group("labels") or "")]
+    return labels
+
+
+def unquoted_words(note: str) -> str | None:
+    """The words an omission footnote names without quotation marks, or None."""
+    m = _UNQUOTED_WORDS.match(note.strip())
+    if not m or re.match(r"(?i)certain\b", m.group("old")):
+        return None
+    return m.group("old").strip(" .‘’'―‖")  # "The word ‘and’ omitted", a scan's ―quotes‖
+
+
+# a label quoted inside a sentence ("under sub-section (4) of section 44") is a reference, not a unit's start
+_REFERENCE = re.compile(r"(?:sub-?\s?sections?|sub-?\s?clauses?|clauses?|sections?|items?|rules?|articles?|paragraphs?)"
+                        r"\s*\S?$", re.IGNORECASE)  # not "and": a list of clauses ends "...; and (c)"
+
+
+def _next_unit(pattern: re.Pattern, region: str, pos: int, unit: str = "") -> int:
+    """Where the next unit starts after pos (a label that is not a reference), or the region's end. After a
+    lettered clause, a roman label ("(i)") opens its own sub-clause unless it is the next letter."""
+    letter = unit[1:-1].lower()
+    for m in pattern.finditer(region, pos):
+        before = region[:m.start() + 1]
+        if _REFERENCE.search(before) or re.search(r"\)\s*(?:,|and|or|to)\s*(?:\d{1,2}\s*)?$", before):
+            continue  # nor one continuing a list of references: "sub-sections (5), 2(6) and (10)"
+        label = (m.groupdict().get("label") or "").lower()
+        if (re.fullmatch(r"[ivx]+", label) and len(letter) == 1 and letter.isalpha()
+                and label != chr(ord(letter) + 1)):
+            continue
+        return m.start()
+    return len(region)
+
+
+# a proviso or Explanation that goes on into its own list of items
+_LEAD_IN = re.compile(r"(?:[—–:-]|�|\b(?:of|if|to|namely|means|includes|whether)[,—–:\s-]*�?)\s*$")
+
+
+def earlier_unit(current_section: str, unit: str, copy: Copy, next_section: str | None, section: str,
+                 headings: tuple[Heading | None, Heading | None] = (None, None)) -> str | None:
+    """The unit as the copy has it: from its label to the next label of the same kind (or the end of
+    the section); a proviso or Explanation only when the copy's section has just the one."""
+    cwords = [t[0] for t in _tokens(copy.text)]
+    lo, hi = _section_range(cwords, current_section, next_section, section, *headings)
+    if (lo, hi) == (0, len(cwords)):
+        return None  # the section's place in the copy is not known for sure
+    ctoks = _tokens(copy.text)
+    region = copy.text[ctoks[lo][1]:ctoks[hi - 1][2] if hi < len(ctoks) else len(copy.text)]
+    if unit in ("proviso", "Explanation"):
+        word = "Provided" if unit == "proviso" else "Explanation"
+        hits = [m for m in re.finditer(rf"(?<![\w(]){word}\b", region)]
+        if len(hits) != 1:
+            return None
+        start = hits[0].start()
+        nxt = re.compile(r"(?:^|\s)\(\s*(?:\d{1,3}[A-Z]?|[a-z]{1,2})\s*\)\s|(?<![\w(])(?:Provided|Explanation)\b")
+        end = _next_unit(nxt, region, hits[0].end())
+        if _LEAD_IN.search(region[start:end]):  # "...shall not apply to the distribution of— (a) ... (b) ..."
+            nxt = re.compile(r"(?:^|\s)\(\s*\d{1,3}[A-Z]?\s*\)\s|(?<![\w(])(?:Provided|Explanation)\b")
+            end = _next_unit(nxt, region, hits[0].end())
+    else:
+        # "sub-section (6) of section 9B": a reference, though the scan broke "sub- section" or lost the word
+        hits = [m for m in re.finditer(rf"(?:^|\s){re.escape(unit)}\s", region)
+                if not _REFERENCE.search(region[:m.start() + 1]) and not region.startswith("of ", m.end())]
+        if len(hits) != 1:
+            return None
+        start = hits[0].start()
+        # the next unit of the same kind, or, for a lettered clause, a numbered sub-section; a scan may
+        # print the letter as a capital ("(C)")
+        same_kind = r"\d{1,3}[A-Z]?" if unit[1:-1].isdigit() else r"[a-zA-Z]{1,4}|\d{1,3}[A-Z]?"
+        # a label may run straight into its text in a scan: '(9)"Collector" means'
+        end = _next_unit(re.compile(rf"(?:^|[\s;:])\(\s*(?P<label>{same_kind})\s*\)(?=\s|[\"“A-Z])"
+                                    r"|(?<![\w(])(?:Provided|Explanation)\b"), region, hits[0].end(), unit)
+    old = _tidy(region[start:end].strip(" ,;:"))
+    if len(old.split()) < 3 or len(old.split()) > 400:
+        return None  # a bare label ("(b) 1"), or more than one unit
+    return old
+
+
+def fill(amendments: list[Amendment], sections: dict[str, str], copies: list[Copy],
+         titles: dict[str, str] | None = None) -> list[Filled]:
+    """Earlier wordings for the substitutions and omissions that lack them. sections: today's text of
+    each section; titles: their titles, to find a section whose opening words have changed."""
     out = []
     by_age = sorted(copies, key=lambda c: c.saved, reverse=True)
     order = list(sections)  # document order
     following = {sec: sections[order[k + 1]] for k, sec in enumerate(order[:-1])}
+    titles = titles or {}
+    heading = {sec: Heading(sec, titles[sec]) for sec in order if titles.get(sec)}
+    around = {sec: (heading.get(sec), heading.get(order[k + 1]) if k + 1 < len(order) else None)
+              for k, sec in enumerate(order)}
     for a in amendments:
-        if a.action != SUBSTITUTED or a.old_text is not None or a.section not in sections:
+        if a.old_text is not None or a.section not in sections:
+            continue
+        if a.action == OMITTED:
+            words = unquoted_words(a.note)
+            if words:  # the footnote names the words after all, without quotation marks
+                out.append(Filled(a.act, a.section, a.by, a.note, words, "the footnote"))
+                continue
+            units = omitted_units(a.note)
+            if len(units) != 1:
+                continue  # several units ("clauses (c) and (d)"), or none named: not placed for sure
+            for copy in (c for c in by_age if predates(c, a)):
+                old = earlier_unit(sections[a.section], units[0], copy, following.get(a.section), a.section,
+                                   around[a.section])
+                if old:
+                    out.append(Filled(a.act, a.section, a.by, a.note, old,
+                                      f"archived India Code copy saved {copy.saved}", units[0]))
+                    break
+            continue
+        if a.action != SUBSTITUTED:
             continue
         for copy in (c for c in by_age if predates(c, a)):
-            old = earlier_words(sections[a.section], a, copy, following.get(a.section))
+            old = earlier_words(sections[a.section], a, copy, following.get(a.section), headings=around[a.section])
             if old:
                 out.append(Filled(a.act, a.section, a.by, a.note, old,
                                   f"archived India Code copy saved {copy.saved}"))

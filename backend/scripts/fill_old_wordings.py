@@ -3,7 +3,8 @@
     python -m scripts.fill_old_wordings <archive dir>     (scripts/fetch_archived_acts.py's output)
 
 Reads data/amendments/<code>.jsonl and data/statutes/<code>.jsonl, writes data/amendments/_filled.jsonl:
-one line per substitution whose earlier wording was found, {act, section, by, note, old_text, source}.
+one line per substitution or omission whose earlier wording was found,
+{act, section, by, note, old_text, source, unit}.
 app/judgments/law_at_time.History applies them. Run it again after each scripts/build_corpus.py run.
 """
 
@@ -14,7 +15,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from app.history.amendments import SUBSTITUTED, Amendment
+from app.history.amendments import OMITTED, SUBSTITUTED, Amendment
 from app.history.fill import fill, read_copy
 from scripts.fetch_archived_acts import complete
 from scripts.pdf_text import fast_text
@@ -48,20 +49,23 @@ def main() -> int:
         if not amend.exists() or not statute.exists():
             continue
         amendments = [Amendment(**json.loads(x)) for x in amend.read_text(encoding="utf-8").splitlines()]
-        gaps = sum(a.action == SUBSTITUTED and a.old_text is None for a in amendments)
+        gaps = Counter(a.action for a in amendments if a.action in (SUBSTITUTED, OMITTED) and a.old_text is None)
         sections: dict[str, str] = {}
+        titles: dict[str, str] = {}
         for x in statute.read_text(encoding="utf-8").splitlines():
             r = json.loads(x)
             sections[r["section_number"]] = sections.get(r["section_number"], "") + " " + (r.get("text") or "")
-        found = fill(amendments, sections, copies_of(archive / code, entry))
-        stats["gaps"] += gaps
-        stats["filled"] += len(found)
+            titles.setdefault(r["section_number"], r.get("section_title") or "")
+        found = fill(amendments, sections, copies_of(archive / code, entry), titles)
+        stats.update({f"gaps {k}": v for k, v in gaps.items()})
+        stats.update(f"filled {'omitted' if f.unit or f.source == 'the footnote' else 'substituted'}" for f in found)
         lines += [json.dumps(f.__dict__, ensure_ascii=False) for f in found]
         if found:
-            print(f"{code}: {len(found)}/{gaps}", flush=True)
+            print(f"{code}: {len(found)}/{sum(gaps.values())}", flush=True)
     (DATA / "amendments" / "_filled.jsonl").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    print(f"filled {stats['filled']} of {stats['gaps']} substitutions without their earlier wording "
-          f"(in the {len(manifest)} Acts fetched)")
+    for kind in (SUBSTITUTED, OMITTED):
+        print(f"{kind}: filled {stats['filled ' + kind]} of {stats['gaps ' + kind]} without their earlier wording "
+              f"(in the {len(manifest)} Acts fetched)")
     return 0
 
 

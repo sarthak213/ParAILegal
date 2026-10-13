@@ -68,6 +68,7 @@ class Amendment:
                           # "notification date", "commencement"; "" when it is not
     year: int | None = None  # the amending law's year ("Act 46 of 1983" -> 1983), when known
     old_source: str = ""     # where old_text came from when the footnote lacks it (app/history/fill.py)
+    unit: str = ""           # an omission's unit, when old_text came from a copy: "(b)", "(3)", "proviso"
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -374,6 +375,9 @@ def text_as_on(current: str, amendments: list[Amendment], on: str) -> PointInTim
         elif a.action == SUBSTITUTED and a.old_text is not None and body and body in text:
             text = text.replace(body, _plain(a.old_text), 1)
             result.undone.append(info)
+        elif a.action == OMITTED and a.old_text and a.unit and (placed := _restore(text, a.unit, a.old_text)):
+            text = placed  # the omitted clause, sub-section, proviso or Explanation, back in its place
+            result.undone.append(info)
         elif a.action == OMITTED and a.old_text:
             result.unknown.append({**info, "omitted_words": a.old_text})  # where they stood is not recorded
         else:
@@ -382,6 +386,36 @@ def text_as_on(current: str, amendments: list[Amendment], on: str) -> PointInTim
     result.text = " ".join(text.split())
     result.complete = not result.unknown and not result.undated
     return result
+
+
+def _restore(text: str, unit: str, old: str) -> str | None:
+    """The text with an omitted unit put back: a clause or sub-section before the next one there is
+    today ("(b)" before "(c)"), a proviso or Explanation at the end; None when its place is unclear."""
+    if unit in ("proviso", "Explanation"):
+        return f"{text} {old}"
+    label = unit.strip("()")
+    if label.isdigit():
+        following = [f"({n})" for n in range(int(label) + 1, int(label) + 6)]
+    elif len(label) == 1 and label.isalpha():
+        following = [f"({chr(c)})" for c in range(ord(label) + 1, min(ord(label) + 6, ord("z") + 1))]
+    else:
+        return None  # "(ia)", "(iii)": the next label is not certain
+    for nxt in following:
+        m = re.search(rf"(?:^|\s){re.escape(nxt)}\s", text)
+        if m:
+            return f"{_STARS.sub('', text[:m.start()])} {old} {text[m.start():].lstrip()}"
+    # the last of its series ("(n)" after "(m)"): after the one before it, ahead of the next
+    # sub-section ("(2)") or at the end
+    if len(label) == 1 and label.isalpha() and label > "a":
+        before = re.search(rf"(?:^|\s)\({chr(ord(label) - 1)}\)\s", text)
+        if before:
+            after = re.compile(r"(?:^|\s)\(\d{1,3}[A-Z]?\)\s").search(text, before.end())
+            at = after.start() if after else len(text)
+            return f"{_STARS.sub('', text[:at])} {old} {text[at:].lstrip()}".strip()
+    return None
+
+
+_STARS = re.compile(r"(?:\s*\*){2,}\s*$")  # India Code's "* * * * *" where the omitted words stood
 
 
 def _plain(text: str) -> str:
