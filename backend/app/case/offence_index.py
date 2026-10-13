@@ -35,6 +35,10 @@ SPECIAL_ACT_OFF_TOPIC = 0.5  # and when it does not: "the company's money" alone
 _GENERIC_TITLE_WORDS = set("""act acts the and of for in on to with provisions provision special miscellaneous
     prevention prevent protection control regulation regulations development central indian india national
     amendment code powers power procedure general certain matters other public""".split())
+# words of everyday facts that name a special Act's subject without making it that Act's case: "the
+# company's money" in a cashier's breach of trust is not a Companies Act offence; with a word of that
+# law ("the company director") they do
+_EVERYDAY_STEMS = {"compa": {"direc", "share", "audit", "board", "prosp", "incor", "regis", "liqui", "deben"}}
 BODY_WORDS = 350
 FIELDS = FieldWeights(title=3.0, heading=3.0, body=1.0, aliases=1.0)
 # a provision that makes something an offence, however the Act words it: "shall be punished",
@@ -43,6 +47,7 @@ FIELDS = FieldWeights(title=3.0, heading=3.0, body=1.0, aliases=1.0)
 PUNISHES = re.compile(r"\bbe punish(?:ed|able)\b|\bpunishable with\b|\bcommitted an offence\b|\bguilty of an offence\b|"
                       r"\bimprisonment for a term\b|\brigorous imprisonment\b", re.IGNORECASE)
 _PUNISHES = PUNISHES
+_REFERRED = re.compile(r"\bany act referred to in section (\d{1,3}[A-Z]{0,2})\b")
 
 # everyday words -> the words the law uses; added to the act's keywords (not replacing them)
 LAY_TERMS: list[tuple[str, str]] = [
@@ -55,6 +60,12 @@ LAY_TERMS: list[tuple[str, str]] = [
     (r"\b(threat\w*|intimidat\w*)\b", "criminal intimidation threatens"),
     (r"\b(promis\w*|lured|fake|fraud\w*|dup\w*|cheat\w*|deceiv\w*|induc\w*)\b", "cheating deceiving dishonestly induces delivery of property"),
     (r"\b(kept (it |the money |them )?for (himself|herself|themselves)|misappropriat\w*|embezzl\w*|siphon\w*|entrusted)\b", "criminal breach of trust entrusted misappropriates"),
+    # money an employee or agent handled for someone else: entrusted to them in that capacity
+    (r"\b(cashier|accountant|clerk|employee|servant|agent|manager|collected|collection)\b.*\b(kept|took|used|spent|did not (deposit|return|pay))\b"
+     r"|\b(kept|took|used|spent)\b.*\b(collected|entrusted|given to (him|her) to)\b",
+     "criminal breach of trust entrusted dominion property"),
+    (r"\b(posed as|pos\w* as|pretend\w*|impersonat\w*|claimed to be|said (they|he|she) (were|was)|fake|in khaki)\b.*"
+     r"\b(police\w*|officers?|officials?|inspector|public servant|government)\b", "personating a public servant"),
     (r"\b(sexual intercourse|raped|rape|forced sex|sexually assault\w*)\b", "rape sexual intercourse without consent"),
     (r"\b(touch\w*|grop\w*|molest\w*|outrag\w*|disrob\w*)\b", "criminal force woman outrage modesty sexual harassment"),
     (r"\b(follow\w*|stalk\w*|kept messaging|kept calling|watch\w* her)\b", "stalking follows contacts monitors"),
@@ -63,12 +74,21 @@ LAY_TERMS: list[tuple[str, str]] = [
     (r"\b(broke into|broke the lock|break\w* into|burgl\w*)\b", "house-breaking house-trespass"),
     (r"\b(blackmail\w*|demand\w* .*threat\w*|threat\w* .*(pay|money))\b", "extortion"),
     (r"\b(forg\w*|fake (deed|document|signature|certificate))\b", "forgery forged document"),
+    (r"\b(forg\w*|fake|false)\b.*\b(deeds?|wills?|power of attorney|property papers|title)\b|\b(deeds?|wills?)\b.*\b(forg\w*|fake)\b",
+     "forgery of valuable security will"),
+    (r"\b(us\w*|produc\w*|submit\w*|relied on)\b.*\b(forged|fake)\b|\b(forged|fake)\b.*\bto (register|claim|obtain|get)\b",
+     "using as genuine forged document"),
     (r"\b(defam\w*|reputation|false (statement|allegation)\w*)\b", "defamation imputation harm reputation"),
     (r"\b(drove|driving|drive|rash\w*|speed\w*|negligen\w*)\b", "rash negligent act causing death by negligence driving"),
     (r"\b(hang\w*|suicide|took (her|his) own life|poison\w* (herself|himself))\b", "abetment of suicide"),
     (r"\b(set fire|set .* on fire|petrol|burnt|burned)\b", "mischief by fire"),
     (r"\b(fired|shot at|shoot\w*|pistol|gun|revolver)\b", "attempt to murder firearm"),
     (r"\b(entered|refused to leave|occupied|encroach\w*)\b", "criminal trespass enters property"),
+    (r"\b(block\w*|did not let|didn't let|not allow\w*|stopped (him|her|them)|stood (across|in) (the|his|her) (way|path|lane|road))\b",
+     "wrongful restraint obstructs proceed direction"),
+    # people sold or bought, not land or goods
+    (r"\b(traffick\w*|brothel)\b|\b(sold|sell\w*|bought)\s+(?:\w+\s+){0,3}(girls?|women|woman|boys?|child\w*|persons?|people|them|her|him)\b",
+     "trafficking of persons recruits transports exploitation"),
     (r"\b(dowry)\b", "dowry cruelty demand"),
     # a demand of money or goods tied to a marriage is a dowry demand, whether or not the facts say "dowry"
     (r"\b(marri\w*|wedding|groom\w*|bride\w*|in-?laws?)\b.*\b(demand\w*|asked for|insisted)\b|\b(demand\w*|asked for)\b.*\b(marri\w*|wedding|groom\w*|bride\w*)\b",
@@ -79,12 +99,21 @@ LAY_TERMS: list[tuple[str, str]] = [
     # whole fields of law, by their everyday words
     (r"\b(ganja|charas|hashish|bhang|marijuana|weed|cannabis)\b", "cannabis narcotic drugs"),
     (r"\b(heroin|smack|brown sugar|opium|cocaine|morphine|mdma|narcotic\w*|drugs?)\b", "narcotic drug psychotropic substance"),
+    # the NDPS Act punishes by class of drug, and names no street drug: which class each is in
+    (r"\b(heroin|smack|brown sugar|diacetylmorphine|morphine|codeine|cocaine|methadone|pethidine|fentanyl|tramadol)\b",
+     "manufactured drugs and preparations"),
+    (r"\b(mdma|ecstasy|lsd|amphetamine\w*|methamphetamine|alprazolam|diazepam|nitrazepam)\b", "psychotropic substances"),
+    (r"\b(doda|poppy husk|poppy straw)\b", "poppy straw"),
+    (r"\b(opium|afeem)\b", "opium poppy and opium"),
     (r"\b(pistol|revolver|gun|rifle|firearm\w*|cartridge\w*|ammunition|bullets?)\b", "arms firearm ammunition licence"),
     (r"\b(cheque\w*|check bounce\w*|bounced|dishonour\w*)\b", "dishonour of cheque insufficiency of funds negotiable instruments"),
     (r"\b(online|otp|computer|internet|e-?mail|website|app|social media|facebook|instagram|whatsapp|hack\w*|password|account)\b",
      "computer resource electronic information technology"),
     (r"\b(five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|\d{1,3}|group of|mob|gang|crowd)\b.*\b(men|persons|people|accused|members)\b|\b(mob|gang|crowd)\b",
      "five or more persons conjointly unlawful assembly rioting dacoity"),
+    # a group using force: rioting, more so when armed
+    (r"\b(group|mob|gang|crowd|men|persons|people)\b.*\b(attack\w*|beat\w*|assault\w*|pelt\w*|stones?|vandalis\w*|ransack\w*|damag\w*)\b",
+     "rioting force violence unlawful assembly deadly weapon"),
     (r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)[- ]year[- ]old\b|\b(minor|child|girl|boy)\b",
      "child minor children"),
     (r"\b(recorded|filmed|photograph\w*|camera|video\w*)\b.*\b(bath\w*|chang\w*|undress\w*|privat\w*)\b", "voyeurism private act captures image"),
@@ -108,6 +137,16 @@ def _subject(title: str) -> set[str]:
     """"The Prevention of Corruption Act, 1988" -> {"corru"}; "The Arms Act, 1959" -> {"arms"}."""
     words = re.findall(r"[a-z]{4,}", title.lower())
     return {w[:5] for w in words if w not in _GENERIC_TITLE_WORDS}
+
+
+_NAME_STOP = {"of", "or", "and", "to", "by", "the", "a", "an", "in", "with", "for", "on", "from", "any", "voluntarily",
+              # a title's boilerplate: "contravention in relation to manufactured drugs", "computer related offences"
+              "contravention", "relation", "related", "offence", "offences", "punishment", "penalty", "certain", "respect"}
+
+
+def _stems(name: str) -> frozenset[str]:
+    """A name's content words, as 5-letter stems: "voluntarily causing hurt" -> {"causi", "hurt"}."""
+    return frozenset(w[:5] for w in _key(name).split() if w not in _NAME_STOP)
 
 
 def _key(title: str) -> str:
@@ -135,6 +174,7 @@ class OffenceIndex:
         self.prior: list[float] = []
         self.subject: list[set[str]] = []  # a special Act's distinctive title words, as 5-letter stems
         self.chunks_of: list[list[int]] = []
+        self.names: list[str] = []  # each offence's name, from its title ("rioting", "wrongful restraint")
         docs = []
         for ref in bns + sorted(r for r in by_ref if not r.startswith(("BNS ", "BNSS ", "BSA ", "ART ", "CASE ", "IPC ", "CRPC ", "IEA "))):
             act, _, number = ref.rpartition(" ")
@@ -154,11 +194,17 @@ class OffenceIndex:
                 if (number.upper().startswith("SCHEDULE") or (first.get("status") or "").lower() == "repealed"
                         or not _PUNISHES.search(text(ref))):
                     continue  # a schedule is a table, not a provision that creates an offence
-                heading, chunk_ids, body, prior = first.get("document_title") or "", by_ref[ref], text(ref), SPECIAL_ACT_PRIOR
+                # an offence defined by reference ("does any act referred to in section 43", IT Act s.66)
+                # carries the acts that section lists, as a BNS punishment carries its definition
+                referred = [f"{act} {n}" for n in dict.fromkeys(_REFERRED.findall(text(ref))) if f"{act} {n}" in by_ref]
+                chunk_ids = [i for r in [ref, *referred] for i in by_ref[r]]
+                heading, prior = first.get("document_title") or "", SPECIAL_ACT_PRIOR
+                body = " ".join([text(ref), *(text(r) for r in referred)])
             self.refs.append(ref)
             self.prior.append(prior)
             self.subject.append(_subject(heading) if act != "BNS" else set())
             self.chunks_of.append(chunk_ids)
+            self.names.append(re.sub(r"^(?:punishment|penalty) for ", "", _key(title(ref))))
             docs.append({"title": title(ref), "heading": heading, "body": " ".join(body.split()[:BODY_WORDS]),
                          "aliases": ""})
         self.bm25 = BM25Index(docs)
@@ -189,19 +235,31 @@ class OffenceIndex:
         np.maximum.at(best, self.vec_owner, sims)
         return [int(k) for k in np.argsort(-best)[:limit] if np.isfinite(best[k])]
 
-    def search(self, act: str, k: int = 10, pool: int = 60) -> list[tuple[str, float]]:
-        """(ref, score) for one act, best first."""
-        words = re.findall(r"[a-z][a-z-]{2,}", f"{act} {lay_terms(act)}".lower())
+    def search(self, act: str, k: int = 10, pool: int = 60, names: list[str] = ()) -> list[tuple[str, float]]:
+        """(ref, score) for one act, best first. names: the offences the model named for it
+        ("criminal force"), searched with it."""
+        lay = lay_terms(act)
+        words = re.findall(r"[a-z][a-z-]{2,}", f"{act} {lay} {' '.join(names)}".lower())
         keyword = [i for i, _ in self.bm25.search(list(dict.fromkeys(words)), limit=pool, weights=FIELDS)]
-        meaning = self._meaning(act, pool)
+        meaning = self._meaning(f"{act} ({'; '.join(names)})" if names else act, pool)
+        # offences the lay words or the model name outright ("attacked as a group" -> "rioting"): their
+        # own name is the strongest sign, where the definition's wording ("force or violence used by an
+        # unlawful assembly") is far in meaning from the facts'. A lay word must be the whole title; a
+        # model's name, all in it ("criminal force" in "assault or criminal force to woman ...")
+        # the model's first name before its others; then what the lay words name
+        said = _stems(lay)
+        named = [i for n in names if (want := _stems(n)) for i in keyword if want <= _stems(self.names[i])]
+        named += [i for i in keyword if (title := _stems(self.names[i])) and title <= said]
+        named = list(dict.fromkeys(named))
         score: dict[int, float] = defaultdict(float)
         general_ok = bool(_ABETS.search(act))
-        for ranked in (keyword, meaning):
+        for ranked in (keyword, meaning, named):
             for rank, i in enumerate(ranked):
                 if self.refs[i] in GENERAL and not general_ok:
                     continue
                 score[i] += 1 / (RRF_K + rank + 1)
         stems = {w[:5] for w in words}
+        stems -= {s for s, law in _EVERYDAY_STEMS.items() if not stems & law}
         prior = {i: self.prior[i] if not self.subject[i] or self.subject[i] & stems else SPECIAL_ACT_OFF_TOPIC
                  for i in score}
         best = sorted(score, key=lambda i: -score[i] * prior[i])[:k]

@@ -1,0 +1,93 @@
+[
+  {
+    "id": "knife-robbery",
+    "facts": "Two men on a motorcycle stopped the complainant on a dark road, showed him a knife and took his wallet and mobile phone.",
+    "acts": ["the accused showed a knife to the complainant", "the accused took the complainant's wallet and phone"],
+    "expect": ["BNS 309"],
+    "also": ["BNS 303", "BNS 308", "BNS 351", "BNS 310"]
+  },
+  {
+    "id": "crop-damage",
+    "facts": "Out of enmity, the accused let his buffaloes into the complainant's field at night and they destroyed the standing wheat crop.",
+    "acts": ["the accused let his buffaloes into the complainant's field", "the buffaloes destroyed the standing wheat crop"],
+    "expect": ["BNS 324"],
+    "also": ["BNS 329", "BNS 325"]
+  },
+  {
+    "id": "disrobing",
+    "facts": "During a quarrel over water, the accused dragged the complainant's wife out of her house and tore her clothes in front of the neighbours.",
+    "acts": ["the accused dragged the woman out of her house", "the accused tore her clothes in front of the neighbours"],
+    "expect": ["BNS 76"],
+    "also": ["BNS 74", "BNS 131", "BNS 115", "BNS 79", "BNS 329"]
+  },
+  {
+    "id": "pushed-conductor",
+    "facts": "A passenger who refused to buy a ticket caught the bus conductor by his collar and pushed him off the steps.",
+    "acts": ["the accused caught the conductor by the collar", "the accused pushed the conductor off the bus steps"],
+    "expect": ["BNS 131"],
+    "also": ["BNS 115", "BNS 121", "BNS 132"]
+  },
+  {
+    "id": "drunk-surgeon",
+    "facts": "The surgeon operated on the patient while drunk, cut a major artery by mistake and the patient bled to death.",
+    "acts": ["the doctor operated on the patient while drunk", "the doctor cut an artery by mistake and the patient died"],
+    "expect": ["BNS 106"],
+    "also": ["BNS 125", "BNS 105"]
+  },
+  {
+    "id": "taken-to-marry",
+    "facts": "The accused took a 16-year-old girl away from her parents' home without their consent, intending to marry her.",
+    "acts": ["the accused took a 16-year-old girl away from her parents without their consent", "the accused intended to marry the girl"],
+    "expect": ["BNS 87", "BNS 137"],
+    "also": ["BNS 96", "protection_of_children_from_sexual_offences_act_2012 4"]
+  },
+  {
+    "id": "double-sale",
+    "facts": "The accused sold the same plot of land to two buyers and took the full price from both of them.",
+    "acts": ["the accused sold the same plot to two different buyers", "the accused took the full price from both buyers"],
+    "expect": ["BNS 318"],
+    "also": ["BNS 316", "BNS 336", "BNS 340"]
+  },
+  {
+    "id": "poisoned-food",
+    "facts": "The wife mixed rat poison into her husband's dinner and he died the same night.",
+    "acts": ["the accused mixed rat poison into her husband's food", "the husband died after eating it"],
+    "expect": ["BNS 103"],
+    "also": ["BNS 101", "BNS 123", "BNS 105"]
+  },
+  {
+    "id": "obscene-songs",
+    "facts": "A group of young men sat at a public bus stop every evening playing obscene songs loudly and making obscene gestures at women passing by.",
+    "acts": ["the accused played obscene songs at a public bus stop", "the accused made obscene gestures at women passing by"],
+    "expect": ["BNS 296"],
+    "also": ["BNS 79", "BNS 75"]
+  },
+  {
+    "id": "email-snooping",
+    "facts": "After the break-up, the accused used his former partner's password without her permission to log into her email and downloaded her messages.",
+    "acts": ["the accused logged into his former partner's email account without permission", "the accused downloaded her messages"],
+    "expect": ["information_technology_act_2000 66"],
+    "also": ["information_technology_act_2000 43", "information_technology_act_2000 66C", "BNS 78"]
+  },
+  {
+    "id": "heroin",
+    "facts": "On a search at the bus stand, the police found 50 grams of heroin in the accused's bag.",
+    "acts": ["the accused was carrying 50 grams of heroin in his bag"],
+    "expect": ["narcotic_drugs_and_psychotropic_substances_act_1985 21"],
+    "also": ["narcotic_drugs_and_psychotropic_substances_act_1985 8"]
+  },
+  {
+    "id": "adulterated-milk",
+    "facts": "The dairy owner mixed urea and detergent into the milk he sold to households in the colony.",
+    "acts": ["the accused mixed urea and detergent into milk", "the accused sold the milk to households"],
+    "expect": ["BNS 274"],
+    "also": ["BNS 275", "BNS 318"]
+  },
+  {
+    "id": "custodial-beating",
+    "facts": "Police officers kept a theft suspect in the lock-up for two days and beat him with belts to make him confess.",
+    "acts": ["the police kept the suspect in the lock-up for two days", "the police beat the suspect with belts to make him confess"],
+    "expect": ["BNS 120"],
+    "also": ["BNS 115", "BNS 127", "BNS 117", "BNS 118"]
+  }
+]

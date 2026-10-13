@@ -1,7 +1,7 @@
 """Case Builder (criminal, CB-1): typed facts -> structured facts -> offences -> elements -> brief.
 
-    POST /api/v1/case/facts      {facts}                      -> structured facts (model)
-    POST /api/v1/case/offences   {facts, acts}                -> candidate offences with procedure (no model)
+    POST /api/v1/case/facts      {facts}                      -> structured facts, with offence names per act (model)
+    POST /api/v1/case/offences   {facts, acts, names}         -> candidate offences with procedure (no model)
     POST /api/v1/case/elements   {facts, ref}                 -> elements checklist for one offence (model)
     POST /api/v1/case/precedents {facts, refs, acts}          -> Supreme Court judgments for the facts (no model)
     POST /api/v1/case/compare    {facts, id}                  -> how one precedent's facts compare (model)
@@ -42,6 +42,8 @@ class OffencesRequest(FactsRequest):
     acts: list[str] = Field(default_factory=list, max_length=20)
     # sections the lawyer added by number ("BNS 85"), listed first
     include: list[str] = Field(default_factory=list, max_length=6)
+    # /facts' "offence_names": {act: names of the offences it may be}, a search hint for each act
+    names: dict[str, list[str]] = Field(default_factory=dict, max_length=20)
 
 
 class ElementsRequest(FactsRequest):
@@ -90,14 +92,18 @@ async def _model_url(rag) -> str:
 @router.post("/facts", summary="Structure the facts")
 async def facts(body: FactsRequest, rag=Depends(get_rag_system)) -> dict:
     rag = _v2(rag)
-    return {"facts": await builder.structure_facts(body.facts, await _model_url(rag))}
+    url = await _model_url(rag)
+    out = await builder.structure_facts(body.facts, url)
+    out["offence_names"] = await builder.name_offences(out["acts"], url, body.facts)
+    return {"facts": out}
 
 
 @router.post("/offences", summary="Candidate offences for the facts")
 async def offences(body: OffencesRequest, rag=Depends(get_rag_system)) -> dict:
     rag = _v2(rag)
+    names = {act: builder.clean_names(n) for act, n in body.names.items()}
     found = await asyncio.to_thread(builder.offences, body.facts, rag.engine, rag.schedule, body.acts,
-                                    include=body.include)
+                                    include=body.include, names=names)
     return {"offences": found}
 
 
