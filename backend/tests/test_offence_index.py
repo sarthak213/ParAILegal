@@ -61,3 +61,14 @@ def test_general_sections_and_off_topic_special_acts_give_way():
     off = dict(idx.search("the cashier was guilty of fraud with the money"))
     assert on["dowry_prohibition_act_1961 4"] > 0 and "companies_act_2013 447" in off
     assert off["companies_act_2013 447"] < dict(idx.search("the company director was guilty of fraud"))["companies_act_2013 447"]
+
+
+def test_everyday_words_name_offences_without_false_alarms():
+    assert "rioting" in lay_terms("a group of fifteen men armed with sticks attacked shops")
+    assert "wrongful restraint" in lay_terms("the accused blocked the complainant's way and did not let him go")
+    assert "trafficking" in lay_terms("the accused sold them to a brothel")
+    assert "trafficking" not in lay_terms("the accused sold the same plot to two buyers")
+    assert "trafficking" not in lay_terms("a passenger refused to buy a ticket and pushed him")
+    assert "personating a public servant" in lay_terms("two men in khaki said they were police officers")
+    assert "valuable security" in lay_terms("the accused made a sale deed with a forged signature")
+    assert "criminal breach of trust" in lay_terms("the cashier kept the money he had collected from customers")
