@@ -47,6 +47,7 @@ export function CaseBuilder({ ready }: { ready: boolean }) {
 
   const factsOk = facts.trim().length >= 20
   const acts = (structured?.acts ?? []).map(a => a.trim()).filter(Boolean)
+  const names = structured?.offence_names ?? {}
 
   const run = useCallback(async (label: string, work: () => Promise<void>) => {
     setBusy(label)
@@ -73,7 +74,7 @@ export function CaseBuilder({ ready }: { ready: boolean }) {
   })
 
   const findOffences = (include: string[] = added) => run('Finding offences…', async () => {
-    const r = await postCase<{ offences: OffenceCandidate[] }>('offences', { facts, acts, include })
+    const r = await postCase<{ offences: OffenceCandidate[] }>('offences', { facts, acts, include, names })
     setOffences(r.offences)
     // keep earlier choices that are still candidates
     setChosen(c => c.filter(ref => r.offences.some(o => o.ref === ref)))
@@ -84,7 +85,7 @@ export function CaseBuilder({ ready }: { ready: boolean }) {
   // a section the lawyer names: searched for again with it included, and chosen
   const addOffence = (ref: string) => run('Adding…', async () => {
     const include = [...added.filter(x => x !== ref), ref]
-    const r = await postCase<{ offences: OffenceCandidate[] }>('offences', { facts, acts, include })
+    const r = await postCase<{ offences: OffenceCandidate[] }>('offences', { facts, acts, include, names })
     if (!r.offences.some(o => o.ref === ref)) throw new Error(`${ref} is not in ParAILegal's corpus.`)
     setAdded(include)
     setOffences(r.offences)

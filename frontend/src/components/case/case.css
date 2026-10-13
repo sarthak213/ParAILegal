@@ -113,6 +113,7 @@
 }
 .fact-list ul { padding-left: 16px; font-size: 0.84rem; line-height: 1.5; }
 .case-acts__row { display: flex; gap: 6px; margin-bottom: 6px; }
+.case-acts__names { font-size: 0.74rem; color: var(--ink-3); margin: -2px 0 8px 2px; }
 
 .offence-list { display: grid; gap: 8px; }
 .offence-card {

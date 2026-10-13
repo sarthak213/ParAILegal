@@ -8,6 +8,7 @@ export interface StructuredFacts {
   documents: string[]
   acts: string[]          // one sentence per thing an accused did: the offence search reads these
   acts_dropped?: string[] // acts the model gave that the facts do not bear out (app/case/builder.py grounded)
+  offence_names?: Record<string, string[]> // per act, the offences the model named: a search hint only
 }
 
 /** A row of the BNSS First Schedule for the offence's section. */

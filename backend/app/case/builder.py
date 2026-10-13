@@ -84,6 +84,73 @@ async def structure_facts(facts: str, base_url: str) -> dict:
     return out
 
 
+# ── Offence names ──────────────────────────────────────────────────────
+# Each act's likely offences, named in legal words by the model ("criminal force", "cheating"). Only
+# a search hint: everyday wording ("pushed the conductor off the steps") is far from the statute's
+# ("uses force to any person ... without that person's consent"), and no table of lay words can
+# cover every way facts are told. The model names; the statute text decides: the section, its
+# elements and its procedure all still come from the corpus and the schedule.
+
+NAMES_SCHEMA = {
+    "type": "object",
+    "properties": {"acts": {"type": "array", "items": {"type": "object", "properties": {
+        "act": {"type": "string"},
+        "offences": {"type": "array", "items": {"type": "string"}, "maxItems": 3}},
+        "required": ["act", "offences"]}}},
+    "required": ["acts"],
+}
+
+NAMES_PROMPT = """Here are the facts of a case and the acts of the accused taken from them. For each act, give up to three names of the criminal offences it may be under Indian law, reading it with the rest of the facts (acts done together can make one offence: taking property while showing a weapon is robbery). Use the names the law itself uses, for example "theft", "robbery", "mischief", "criminal intimidation", "voluntarily causing grievous hurt", "kidnapping from lawful guardianship", and for offences under special laws name what is done, for example "unauthorised access to a computer", "possession of a narcotic drug", "carrying an unlicensed firearm". Names of offences only: no section numbers, no names of Acts, no explanations. Most likely offence first.
+
+Facts:
+{facts}
+
+Acts:
+{acts}"""
+
+_NAME_WORDS = re.compile(r"[a-z][a-z' -]{2,79}")
+
+
+def clean_names(names: list[str]) -> list[str]:
+    """Names of offences only: no numbers ("section 115"), no Act names, three at most."""
+    out = []
+    for n in names:
+        n = " ".join(n.lower().replace("—", " ").split()).strip(" .,;")
+        if n and _NAME_WORDS.fullmatch(n) and not re.search(r"\b(section|act|code|sanhita|ipc|bns)\b", n):
+            out.append(n)
+    return list(dict.fromkeys(out))[:3]
+
+
+async def name_offences(acts: list[str], base_url: str, facts: str = "") -> dict[str, list[str]]:
+    """{act: names of the offences it may be}, for the offences search."""
+    acts = [a for a in acts if a.strip()][:MAX_QUERIES]
+    if not acts:
+        return {}
+    listed = "\n".join(f"{i}. {a}" for i, a in enumerate(acts, 1))
+    prompt = NAMES_PROMPT.format(facts=facts[:3000], acts=listed)
+    try:  # each act is echoed back: room for it and three names
+        out = await complete_json(base_url, [{"role": "user", "content": prompt}], NAMES_SCHEMA,
+                                  max_tokens=80 + sum(len(a) // 3 + 40 for a in acts))
+    except (RuntimeError, ValueError) as e:  # cut short or refused: the search runs without names
+        print(f"Offence names: {type(e).__name__}: {e}")
+        return {}
+    named: dict[str, list[str]] = {}
+    for item in out.get("acts", []):
+        # the model echoes each act, not always in order or word for word: the act it is closest to
+        act = max(acts, key=lambda a: _likeness(item.get("act", ""), a))
+        if _likeness(item.get("act", ""), act) >= 0.6 and act not in named and (
+                names := clean_names(item.get("offences", []))):
+            named[act] = names
+    return named
+
+
+def _likeness(echo: str, act: str) -> float:
+    """The share of the act's own words (not roles or joining words) that the echo has."""
+    words = lambda s: {w for w in re.findall(r"[a-z]{3,}", s.lower()) if w not in _ROLE_WORDS} - {"the", "and"}  # noqa: E731
+    a, b = words(echo), words(act)
+    return len(a & b) / len(b) if b else 0.0
+
+
 # ── Offences ───────────────────────────────────────────────────────────
 
 # a definition section points to the offence that punishes it: BNS 101 (murder defined) -> BNS 103
@@ -125,7 +192,8 @@ def offence_index(engine: Any, schedule: Schedule):
 
 
 def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None = None,
-             k: int = 10, include: list[str] | None = None) -> list[dict]:
+             k: int = 10, include: list[str] | None = None,
+             names: dict[str, list[str]] | None = None) -> list[dict]:
     """Candidate offences for the facts, best first, each with its classification and whether
     a checklist of elements exists for it.
 
@@ -133,7 +201,10 @@ def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None
     they find far better offences than the narrative's sentences. Scored by search rank (the
     cross-encoder rates narrative text too low to separate offences).
 
-    include: sections the lawyer added by number ("BNS 85"); listed first, whatever search found."""
+    include: sections the lawyer added by number ("BNS 85"); listed first, whatever search found.
+
+    names: {act: offence names} from name_offences, searched with their act."""
+    names = names or {}
     acts = [a for a in (acts or []) if a.strip()][:MAX_QUERIES]
     # the opening of the narrative too: it carries the relationships the acts may leave out
     queries = [*acts, facts[:600]] if acts else sentences(facts)
@@ -147,7 +218,13 @@ def offences(facts: str, engine: Any, schedule: Schedule, acts: list[str] | None
         # different facts, so each adds its ranks (eval/case_offences.py)
         hits = engine.search(query, k=k)
         if index is not None:
-            hits = [{"_ref": ref, "_rank": rank} for rank, (ref, _) in enumerate(index.search(query, k=k), 1)] + hits
+            # the act as written, and again with the model's names for it: the names add what the
+            # act's words miss ("pushed him" -> criminal force), and a wrong name ("robbery" for a
+            # group attack) cannot push out what the act's own words found
+            named = names.get(query, [])
+            hits = [{"_ref": ref, "_rank": rank}
+                    for found in [index.search(query, k=k), *([index.search(query, k=k, names=named)] if named else [])]
+                    for rank, (ref, _) in enumerate(found, 1)] + hits
         for h in hits:
             ref = DEFINED_IN.get(h["_ref"], h["_ref"])
             if not is_offence(ref, schedule, engine):

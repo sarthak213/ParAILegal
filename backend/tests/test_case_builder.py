@@ -97,3 +97,18 @@ def test_an_offence_added_by_number_comes_first():
     found = builder.offences("facts", Engine(), SCHEDULE, acts=["the husband sent a threat"], include=["BNS 85"])
     assert found[0]["ref"] == "BNS 85" and found[0]["added"] and found[0]["has_checklist"]
     assert [o["ref"] for o in found].count("BNS 85") == 1 and not found[1]["added"]
+
+
+def test_offence_names_are_matched_to_their_acts_and_kept_to_names(monkeypatch):
+    acts = ["the accused showed a knife to the complainant", "the accused took the complainant's wallet and phone"]
+
+    async def fake(url, messages, schema, max_tokens, **kw):
+        assert "Facts:\nTwo men stopped him" in messages[0]["content"]
+        return {"acts": [  # echoed out of order, with a section number and an Act's name mixed in
+            {"act": "the accused took the complainant's wallet and phone", "offences": ["Robbery", "theft", "section 309"]},
+            {"act": "the accused showed a knife to the complainant", "offences": ["criminal intimidation", "Arms Act offence"]},
+        ]}
+    monkeypatch.setattr(builder, "complete_json", fake)
+    named = run(builder.name_offences(acts, "http://model", "Two men stopped him and took his wallet."))
+    assert named == {acts[1]: ["robbery", "theft"], acts[0]: ["criminal intimidation"]}
+    assert builder.clean_names(["Voluntarily causing hurt.", "BNS 115", "", "hurt", "x" * 90]) == ["voluntarily causing hurt", "hurt"]

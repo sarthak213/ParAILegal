@@ -37,18 +37,28 @@ export function FactsStep({ facts, onFacts, structured, onStructured }: {
           </div>
           <div className="case-acts">
             <div className="case-label">What the accused did <span className="case-label__note">(the offence search reads these; edit them)</span></div>
-            {structured.acts.map((act, i) => (
-              <div key={i} className="case-acts__row">
-                <input
-                  className="case-input"
-                  value={act}
-                  onChange={e => setActs(structured.acts.map((a, j) => (j === i ? e.target.value : a)))}
-                />
-                <button className="icon-btn" title="Remove" onClick={() => setActs(structured.acts.filter((_, j) => j !== i))}>
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
+            {structured.acts.map((act, i) => {
+              const names = structured.offence_names?.[act] ?? []
+              return (
+                <div key={i}>
+                  <div className="case-acts__row">
+                    <input
+                      className="case-input"
+                      value={act}
+                      onChange={e => setActs(structured.acts.map((a, j) => (j === i ? e.target.value : a)))}
+                    />
+                    <button className="icon-btn" title="Remove" onClick={() => setActs(structured.acts.filter((_, j) => j !== i))}>
+                      <X size={13} />
+                    </button>
+                  </div>
+                  {names.length > 0 && (
+                    <div className="case-acts__names" title="The model's guess, used only to search; the offences found come from the statutes">
+                      Searched as: {names.join(', ')}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
             <button className="link-btn" onClick={() => setActs([...structured.acts, ''])}>
               <Plus size={12} /> Add an act
             </button>

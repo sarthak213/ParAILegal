@@ -47,6 +47,7 @@ FIELDS = FieldWeights(title=3.0, heading=3.0, body=1.0, aliases=1.0)
 PUNISHES = re.compile(r"\bbe punish(?:ed|able)\b|\bpunishable with\b|\bcommitted an offence\b|\bguilty of an offence\b|"
                       r"\bimprisonment for a term\b|\brigorous imprisonment\b", re.IGNORECASE)
 _PUNISHES = PUNISHES
+_REFERRED = re.compile(r"\bany act referred to in section (\d{1,3}[A-Z]{0,2})\b")
 
 # everyday words -> the words the law uses; added to the act's keywords (not replacing them)
 LAY_TERMS: list[tuple[str, str]] = [
@@ -98,6 +99,12 @@ LAY_TERMS: list[tuple[str, str]] = [
     # whole fields of law, by their everyday words
     (r"\b(ganja|charas|hashish|bhang|marijuana|weed|cannabis)\b", "cannabis narcotic drugs"),
     (r"\b(heroin|smack|brown sugar|opium|cocaine|morphine|mdma|narcotic\w*|drugs?)\b", "narcotic drug psychotropic substance"),
+    # the NDPS Act punishes by class of drug, and names no street drug: which class each is in
+    (r"\b(heroin|smack|brown sugar|diacetylmorphine|morphine|codeine|cocaine|methadone|pethidine|fentanyl|tramadol)\b",
+     "manufactured drugs and preparations"),
+    (r"\b(mdma|ecstasy|lsd|amphetamine\w*|methamphetamine|alprazolam|diazepam|nitrazepam)\b", "psychotropic substances"),
+    (r"\b(doda|poppy husk|poppy straw)\b", "poppy straw"),
+    (r"\b(opium|afeem)\b", "opium poppy and opium"),
     (r"\b(pistol|revolver|gun|rifle|firearm\w*|cartridge\w*|ammunition|bullets?)\b", "arms firearm ammunition licence"),
     (r"\b(cheque\w*|check bounce\w*|bounced|dishonour\w*)\b", "dishonour of cheque insufficiency of funds negotiable instruments"),
     (r"\b(online|otp|computer|internet|e-?mail|website|app|social media|facebook|instagram|whatsapp|hack\w*|password|account)\b",
@@ -132,6 +139,16 @@ def _subject(title: str) -> set[str]:
     return {w[:5] for w in words if w not in _GENERIC_TITLE_WORDS}
 
 
+_NAME_STOP = {"of", "or", "and", "to", "by", "the", "a", "an", "in", "with", "for", "on", "from", "any", "voluntarily",
+              # a title's boilerplate: "contravention in relation to manufactured drugs", "computer related offences"
+              "contravention", "relation", "related", "offence", "offences", "punishment", "penalty", "certain", "respect"}
+
+
+def _stems(name: str) -> frozenset[str]:
+    """A name's content words, as 5-letter stems: "voluntarily causing hurt" -> {"causi", "hurt"}."""
+    return frozenset(w[:5] for w in _key(name).split() if w not in _NAME_STOP)
+
+
 def _key(title: str) -> str:
     return re.sub(r"[^a-z ]+", " ", title.lower()).strip()
 
@@ -157,7 +174,7 @@ class OffenceIndex:
         self.prior: list[float] = []
         self.subject: list[set[str]] = []  # a special Act's distinctive title words, as 5-letter stems
         self.chunks_of: list[list[int]] = []
-        self.names: list[str] = []  # a BNS offence's name, from its title ("rioting", "wrongful restraint")
+        self.names: list[str] = []  # each offence's name, from its title ("rioting", "wrongful restraint")
         docs = []
         for ref in bns + sorted(r for r in by_ref if not r.startswith(("BNS ", "BNSS ", "BSA ", "ART ", "CASE ", "IPC ", "CRPC ", "IEA "))):
             act, _, number = ref.rpartition(" ")
@@ -177,12 +194,17 @@ class OffenceIndex:
                 if (number.upper().startswith("SCHEDULE") or (first.get("status") or "").lower() == "repealed"
                         or not _PUNISHES.search(text(ref))):
                     continue  # a schedule is a table, not a provision that creates an offence
-                heading, chunk_ids, body, prior = first.get("document_title") or "", by_ref[ref], text(ref), SPECIAL_ACT_PRIOR
+                # an offence defined by reference ("does any act referred to in section 43", IT Act s.66)
+                # carries the acts that section lists, as a BNS punishment carries its definition
+                referred = [f"{act} {n}" for n in dict.fromkeys(_REFERRED.findall(text(ref))) if f"{act} {n}" in by_ref]
+                chunk_ids = [i for r in [ref, *referred] for i in by_ref[r]]
+                heading, prior = first.get("document_title") or "", SPECIAL_ACT_PRIOR
+                body = " ".join([text(ref), *(text(r) for r in referred)])
             self.refs.append(ref)
             self.prior.append(prior)
             self.subject.append(_subject(heading) if act != "BNS" else set())
             self.chunks_of.append(chunk_ids)
-            self.names.append(re.sub(r"^punishment for ", "", _key(title(ref))) if act == "BNS" else "")
+            self.names.append(re.sub(r"^(?:punishment|penalty) for ", "", _key(title(ref))))
             docs.append({"title": title(ref), "heading": heading, "body": " ".join(body.split()[:BODY_WORDS]),
                          "aliases": ""})
         self.bm25 = BM25Index(docs)
@@ -213,17 +235,22 @@ class OffenceIndex:
         np.maximum.at(best, self.vec_owner, sims)
         return [int(k) for k in np.argsort(-best)[:limit] if np.isfinite(best[k])]
 
-    def search(self, act: str, k: int = 10, pool: int = 60) -> list[tuple[str, float]]:
-        """(ref, score) for one act, best first."""
+    def search(self, act: str, k: int = 10, pool: int = 60, names: list[str] = ()) -> list[tuple[str, float]]:
+        """(ref, score) for one act, best first. names: the offences the model named for it
+        ("criminal force"), searched with it."""
         lay = lay_terms(act)
-        words = re.findall(r"[a-z][a-z-]{2,}", f"{act} {lay}".lower())
+        words = re.findall(r"[a-z][a-z-]{2,}", f"{act} {lay} {' '.join(names)}".lower())
         keyword = [i for i, _ in self.bm25.search(list(dict.fromkeys(words)), limit=pool, weights=FIELDS)]
-        meaning = self._meaning(act, pool)
-        # offences the lay words name outright ("attacked as a group" -> "rioting"): their own name is
-        # the strongest sign, where the definition's wording ("force or violence used by an unlawful
-        # assembly") is far in meaning from the facts'
-        said = f" {_key(lay)} "
-        named = [i for i in keyword if self.names[i] and f" {self.names[i]} " in said]
+        meaning = self._meaning(f"{act} ({'; '.join(names)})" if names else act, pool)
+        # offences the lay words or the model name outright ("attacked as a group" -> "rioting"): their
+        # own name is the strongest sign, where the definition's wording ("force or violence used by an
+        # unlawful assembly") is far in meaning from the facts'. A lay word must be the whole title; a
+        # model's name, all in it ("criminal force" in "assault or criminal force to woman ...")
+        # the model's first name before its others; then what the lay words name
+        said = _stems(lay)
+        named = [i for n in names if (want := _stems(n)) for i in keyword if want <= _stems(self.names[i])]
+        named += [i for i in keyword if (title := _stems(self.names[i])) and title <= said]
+        named = list(dict.fromkeys(named))
         score: dict[int, float] = defaultdict(float)
         general_ok = bool(_ABETS.search(act))
         for ranked in (keyword, meaning, named):
