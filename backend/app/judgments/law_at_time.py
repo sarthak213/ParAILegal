@@ -48,7 +48,7 @@ class History:
                     f = json.loads(line)
                     for a in self.by_section.get((f["act"], f["section"]), []):
                         if a.by == f["by"] and a.note == f["note"] and a.old_text is None:
-                            a.old_text, a.old_source = f["old_text"], f["source"]
+                            a.old_text, a.old_source, a.unit = f["old_text"], f["source"], f.get("unit", "")
 
     def of(self, ref: str) -> list[Amendment]:
         act, _, section = ref.rpartition(" ")
