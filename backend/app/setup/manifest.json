@@ -1,0 +1,39 @@
+{
+ "note": "First-run downloads (app/setup/download.py). Paths are under the data folder. URLs are empty until hosting is decided (docs/PACKAGING.md); sizes and SHA-256 are of the files built on 2026-10-15.",
+ "items": [
+  {
+   "id": "answer-model",
+   "title": "Answer model (Qwen3.5 4B)",
+   "unlocks": "Written answers in Research. Without it, answers show the matching provisions only.",
+   "required": true,
+   "files": [
+    {"path": "models/llm/Qwen3.5-4B-Q4_K_M.gguf", "url": "", "size": 2707513696,
+     "sha256": "25082a7dd3776cc3c741c6347d3bd04523f05796607b3fbc32fa3a25dfa1418c"}
+   ]
+  },
+  {
+   "id": "judgments",
+   "title": "Supreme Court judgments (1950-2025)",
+   "unlocks": "Judgments search, the citator, precedents in the Case Builder and leading cases in answers.",
+   "required": true,
+   "files": [
+    {"path": "data/judgments/index/judgments.sqlite", "url": "", "size": 949903360,
+     "sha256": "1e7a981bbb7cfc5995ece411d72f151ac43f3749f5e208d051523c2bb3fae396"},
+    {"path": "data/judgments/index/vectors.npz", "url": "", "size": 33295750,
+     "sha256": "e0a0def0d5f3c24866302f90f53d162cccd7c8a37346f6535bfcb148c60fc80e"},
+    {"path": "data/judgments/citator.json", "url": "", "size": 33317780,
+     "sha256": "7384028c8e4351c853dfdaca03912da30ed16347c79d27238968c735ed9d7e69"}
+   ]
+  },
+  {
+   "id": "case-model",
+   "title": "Case Builder model (Qwen3.5 9B)",
+   "unlocks": "The Case Builder. It stays locked until this model is installed.",
+   "required": false,
+   "files": [
+    {"path": "models/llm/Qwen3.5-9B-Q4_K_M.gguf", "url": "", "size": 5627044256,
+     "sha256": "cd76ec205963b3b33350093e6904d9de16c4e666fd104e1f632d25c7f15f2a13"}
+   ]
+  }
+ ]
+}

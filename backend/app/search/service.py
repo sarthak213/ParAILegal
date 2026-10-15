@@ -23,7 +23,13 @@ from app.answer.context import Context
 from app.judgments.law_at_time import History
 from app.judgments.store import JudgmentStore
 from app.llm.server import LlamaServer
-from app.core.config import Settings
+from app.core.config import HOME_DIR, Settings
+from app.setup.download import Downloader, load_manifest
+
+
+class CaseBuilderLocked(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("The Case Builder needs its model (Qwen3.5 9B, about 5.6 GB). Download it in Setup.")
 
 
 class SearchService:
@@ -32,9 +38,11 @@ class SearchService:
         self.engine = None
         self.queryRouter = None
         self.answerer = None
-        self.case_server: LlamaServer | None = None  # the Case Builder's model, when it differs
+        self.case_server: LlamaServer | None = None  # the Case Builder's model; None: the Case Builder is locked
         self.judgments: JudgmentStore | None = None
         self.history: History | None = None
+        # the first-run downloads; a finished one is taken up at once (installed)
+        self.downloads = Downloader(HOME_DIR, load_manifest(), on_done=self.installed)
 
     async def initialize(self) -> bool:
         from app.search.engine import SearchEngine
@@ -50,35 +58,63 @@ class SearchService:
         print(f"v2 search ready: {len(self.engine.chunks)} chunks.")
         # Supreme Court judgments and the amendment history, for judgments search and the Case
         # Builder's precedents; both optional data (scripts/build_judgments_index.py, build_corpus.py)
-        self.judgments = await asyncio.to_thread(JudgmentStore.open, dense_key=self.settings.DENSE_MODEL or None)
+        self.judgments = await asyncio.to_thread(self._open_judgments)
         self.history = await asyncio.to_thread(History)
-        if self.judgments:
-            print(f"Judgments: {self.judgments.size} Supreme Court judgments.")
 
-        s = self.settings
-        server = LlamaServer(s.LLM_ENGINE_DIR, s.LLM_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
-                             s.LLM_CTX, s.LLM_IDLE_UNLOAD_S, s.LLM_DEVICE)
-        if server.installed:
-            self.answerer = LocalAnswerer(server, s.TEMPERATURE_ANSWER)
-            print(f"Answer model: {server.model.name} (loads on the first answer)")
-            if s.LLM_PRELOAD:
-                asyncio.create_task(self._preload())
-        else:
-            print(f"No answer model at {server.model}: answers list the matching provisions.")
-        case = LlamaServer(s.LLM_ENGINE_DIR, s.CASE_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
-                           s.LLM_CTX, s.LLM_IDLE_UNLOAD_S, s.LLM_DEVICE)
-        if case.installed and case.model != server.model:
-            self.case_server = case
-            print(f"Case Builder model: {case.model.name}")
+        self._set_up_models()
         return True
+
+    # ── Models and downloads ──────────────────────────────────────────
+
+    def _set_up_models(self) -> None:
+        """The answer model and the Case Builder's, for the files installed now: at start, and again
+        when a download finishes (app/setup/download.py), so the app takes it up without a restart."""
+        s = self.settings
+        if self.answerer is None:
+            server = LlamaServer(s.LLM_ENGINE_DIR, s.LLM_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
+                                 s.LLM_CTX, s.LLM_IDLE_UNLOAD_S, s.LLM_DEVICE)
+            if server.installed:
+                self.answerer = LocalAnswerer(server, s.TEMPERATURE_ANSWER)
+                print(f"Answer model: {server.model.name} (loads on the first answer)")
+                if s.LLM_PRELOAD:
+                    asyncio.create_task(self._preload())
+            else:
+                print(f"No answer model at {server.model}: answers list the matching provisions.")
+        if self.case_server is None:
+            case = LlamaServer(s.LLM_ENGINE_DIR, s.CASE_MODEL_PATH, s.LLM_THREADS, s.LLM_BATCH_THREADS,
+                               s.LLM_CTX, s.LLM_IDLE_UNLOAD_S, s.LLM_DEVICE)
+            if case.installed:
+                self.case_server = case
+                print(f"Case Builder model: {case.model.name}")
+            else:
+                print(f"No Case Builder model at {case.model}: the Case Builder is locked.")
+
+    def _open_judgments(self) -> JudgmentStore | None:
+        store = JudgmentStore.open(dense_key=self.settings.DENSE_MODEL or None)
+        if store:
+            print(f"Judgments: {store.size} Supreme Court judgments.")
+        return store
+
+    def installed(self, item_id: str) -> None:
+        """A download finished (app/setup/download.py on_done): take it up."""
+        if item_id == "judgments":
+            self.judgments = self._open_judgments()
+        else:
+            self._set_up_models()
+
+    @property
+    def case_locked(self) -> bool:
+        """The Case Builder needs its own model; without it the feature is locked (no fallback to
+        the answer model: its comparisons slipped too often, eval/case_compare.py)."""
+        return self.case_server is None
 
     async def case_model(self) -> LlamaServer:
         """The Case Builder's model, running; the answer model is stopped first (one at a time).
-        Raises RuntimeError when no model is installed or it cannot start."""
-        server = self.case_server or (self.answerer.server if self.answerer else None)
-        if server is None:
-            raise RuntimeError("No answer model is installed; the Case Builder needs one for this step")
-        if server is self.case_server and self.answerer is not None:
+        Raises CaseBuilderLocked when it is not installed, RuntimeError when it cannot start."""
+        if self.case_server is None:
+            raise CaseBuilderLocked()
+        server = self.case_server
+        if self.answerer is not None:
             self.answerer.server.stop()
         await server.ensure_running()
         server.touch()

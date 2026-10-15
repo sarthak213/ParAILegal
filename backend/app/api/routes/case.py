@@ -74,11 +74,14 @@ class BriefRequest(FactsRequest):
 def _v2(rag):
     if not hasattr(rag, "prepare"):
         raise HTTPException(501, "The Case Builder needs the offline (v2) engine")
+    if getattr(rag, "case_locked", False):
+        # locked until its own model is downloaded (/api/v1/setup): 423 Locked, with what unlocks it
+        raise HTTPException(423, "The Case Builder needs its model (Qwen3.5 9B, about 5.6 GB). Download it in Setup.")
     return rag
 
 
 async def _model(rag):
-    """The Case Builder's model (CASE_MODEL_PATH, else the answer model), running."""
+    """The Case Builder's model (CASE_MODEL_PATH), running."""
     try:
         return await rag.case_model()
     except RuntimeError as e:

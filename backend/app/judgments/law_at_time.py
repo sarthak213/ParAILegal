@@ -22,9 +22,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.core.config import AMENDMENTS_DIR
 from app.history.amendments import COMMENCED, RENUMBERED, Amendment, _after, text_as_on
 
-AMENDMENTS_DIR = Path(__file__).resolve().parents[2] / "data" / "amendments"
 NAMES = {"IPC": "IPC", "CRPC": "CrPC", "IEA": "Evidence Act", "BNS": "BNS", "BNSS": "BNSS", "BSA": "BSA",
          "ART": "Article", "code_of_civil_procedure_1908": "CPC", "CRPC_1898": "CrPC 1898"}
 

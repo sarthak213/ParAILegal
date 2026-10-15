@@ -9,6 +9,8 @@ import { SourcesPanel } from './components/sources/SourcesPanel'
 import { useHistory } from './hooks/useHistory'
 import { useStream } from './hooks/useStream'
 import { useBackend } from './hooks/useBackend'
+import { useSetup } from './hooks/useSetup'
+import { SetupView, CaseBuilderLocked } from './components/setup/SetupView'
 
 import type { QueryMode, Domain, HistoryEntry } from './types'
 
@@ -43,6 +45,9 @@ export default function App() {
   const { appState, stage, answer, sources, domain: streamDomain,
           error, verification, followUp, stream, cancel, reset } = useStream()
   const backendStatus = useBackend()
+  const setup = useSetup(backendStatus === 'ready')
+  const setupItems = setup.status?.items ?? []
+  const downloading = setupItems.some(i => ['downloading', 'verifying'].includes(i.progress.state))
 
   const isStreaming = appState === 'streaming'
   const isIdle      = appState === 'idle' && !displayQuery
@@ -140,6 +145,7 @@ export default function App() {
         onNew={handleNew}
         view={view}
         onView={setView}
+        setupNeeded={setupItems.some(i => i.required && !i.installed)}
       />
 
       {/* ── Main ── */}
@@ -160,6 +166,12 @@ export default function App() {
                   Ask questions about the Constitution, BNS, BNSS, BSA,
                   and landmark Supreme Court judgements. Every answer cites its source.
                 </p>
+                {setup.status && !setup.status.answers && (
+                  <p className="answers-note">
+                    Answers list the matching provisions until the answer model is downloaded.{' '}
+                    <button onClick={() => setView('setup')}>Downloads</button>
+                  </p>
+                )}
                 <div className="welcome__examples">
                   {EXAMPLE_QUERIES.map(q => (
                     <button
@@ -226,7 +238,15 @@ export default function App() {
         />
       </main>
       <main className="main" hidden={view !== 'case'}>
-        <CaseBuilder ready={backendStatus === 'ready'} />
+        {setup.status?.case_builder_locked ? (
+          <CaseBuilderLocked item={setupItems.find(i => i.id === 'case-model')} busyElsewhere={downloading}
+                             onDownload={setup.download} onCancel={setup.cancel} />
+        ) : (
+          <CaseBuilder ready={backendStatus === 'ready'} />
+        )}
+      </main>
+      <main className="main" hidden={view !== 'setup'}>
+        <SetupView status={setup.status} error={setup.error} onDownload={setup.download} onCancel={setup.cancel} />
       </main>
     </div>
   )
