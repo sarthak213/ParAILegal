@@ -1,6 +1,6 @@
 import type { SourceChunk, Verification } from '../types'
+import { API_BASE } from '../api'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 /** POST to a Case Builder endpoint; the backend's error detail becomes the thrown message. */
 export async function postCase<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {

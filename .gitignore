@@ -19,6 +19,8 @@ backend/models/
 # ── Frontend (Node / Vite) ────────────────────
 node_modules/
 dist/
+# PyInstaller work folder (backend/parailegal-backend.spec)
+backend/build/
 *.log
 
 # Generated evaluation output (rebuild with the scripts in backend/eval/)
