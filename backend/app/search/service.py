@@ -19,6 +19,7 @@ from app.answer.local import LocalAnswerer, finish
 from app.answer.pipeline import Prepared, prepare
 from app.answer.verify import citations, verify
 from app.case.schedule import Schedule
+from app.answer.context import Context
 from app.judgments.law_at_time import History
 from app.judgments.store import JudgmentStore
 from app.llm.server import LlamaServer
@@ -117,7 +118,8 @@ class SearchService:
 
     def prepare(self, query: str, mode: str | None = None, previous: Previous | None = None) -> Prepared:
         """Search, gate and evidence for an answer (app/answer/pipeline.py). Synchronous."""
-        return prepare(query, self.engine, self.settings.TOP_K_SEARCH, mode, previous)
+        return prepare(query, self.engine, self.settings.TOP_K_SEARCH, mode, previous,
+                       Context(history=self.history, judgments=self.judgments))
 
     async def answer(self, query: str, domain: str | None = None, mode: str | None = None,
                      previous: Previous | None = None) -> dict[str, Any]:

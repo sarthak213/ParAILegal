@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
+from app.answer import context as ctx
 from app.answer.sources_only import heading, status_note
 
 # The prompt is read at ~370 tokens/s on the Arc GPU and ~80 on the CPU, so the evidence size
@@ -43,7 +44,12 @@ class Evidence:
     hit: dict           # the chunk shown as the source card
     trimmed: bool = False
     linked: bool = False  # added as the replacement of another provision, not found by search
-    relation: str = ""    # "Replaces Section 302 of the Indian Penal Code [2]"
+    relation: str = ""    # "Formerly Section 302 — Punishment for murder, The Indian Penal Code [2]"
+    notes: list[str] = field(default_factory=list)  # its amendment history, the judgments applying it
+
+    def context(self) -> str:
+        """The lines written by code about the provision, as the model reads them."""
+        return "\n".join([self.relation, *self.notes]).strip()
 
 
 def tokens(text: str) -> int:
@@ -102,7 +108,9 @@ def links_of(hit: dict) -> list[tuple[str, bool]]:
     return out[:MAX_LINKS]
 
 
-def assemble(hits: list[dict], source: ProvisionSource) -> list[Evidence]:
+def assemble(hits: list[dict], source: ProvisionSource, context: ctx.Context | None = None) -> list[Evidence]:
+    """context: the amendment history and the judgments, for each provision's notes (app/answer/context.py)."""
+    context = context or ctx.Context()
     # the provisions to include, in order: each hit, then the replacements of a repealed one
     plan: list[tuple[str, dict, bool]] = []  # (ref, hit, added as a replacement)
     seen: set[str] = set()
@@ -127,23 +135,25 @@ def assemble(hits: list[dict], source: ProvisionSource) -> list[Evidence]:
             break
         parts = source.provision(ref) or [hit]
         text, trimmed = provision_text(parts, hit.get("chunk_id"))
-        cost = tokens(text) + 30  # + header and status line
+        notes = [n for n in (ctx.history(ref, context), ctx.cases(ref, parts[0], context)) if n]
+        cost = tokens(text) + 30 + sum(tokens(n) for n in notes) + 15  # + header, status and relation
         if out and used + cost > BUDGET_TOKENS:
             continue  # a shorter provision further down may still fit
         used += cost
         out.append(Evidence(n=len(out) + 1, ref=ref, header=heading(hit),
                             status=status_note(hit) or "In force", text=text, hit=hit,
-                            trimmed=trimmed, linked=linked))
-    # mark each old ↔ new pair, including pairs that search found on its own (BNS 103 ranked
-    # above IPC 302 for "section 302 IPC"), so the model can say which replaced which
-    by_ref = {e.ref: e for e in out}
-    for old in out:
-        for link, official in links_of(old.hit):
-            new = by_ref.get(link)
-            if new and not new.relation:
-                verb = "Corresponds to" if official else "Probably corresponds to (matched by wording, not an official table)"
-                new.relation = f"{verb} {old.header} [{old.n}]"
-                old.relation = old.relation or f"Now {new.header} [{new.n}]"
+                            trimmed=trimmed, linked=linked, notes=notes))
+    # each old ↔ new link, whether or not the other provision is among the sources ("Formerly
+    # Section 145 of the CrPC"): most case law cites the old number. A source among these is
+    # named with its number, so the model can say which replaced which
+    shown = {e.ref: e.n for e in out}
+    first = {e.ref: (source.provision(e.ref) or [e.hit])[0] for e in out}
+    seen_from: dict[str, list[tuple[str, bool]]] = {}
+    for e in out:
+        for ref, stated in ctx.linked(first[e.ref]):
+            seen_from.setdefault(ref, []).append((e.ref, stated))
+    for e in out:
+        e.relation = ctx.relation(first[e.ref], source, shown, seen_from.get(e.ref, []))
     return out
 
 
@@ -152,8 +162,8 @@ def render(evidence: list[Evidence]) -> str:
     blocks = []
     for e in evidence:
         lines = [f"[{e.n}] {e.header}", f"Status: {e.status}"]
-        if e.relation:
-            lines.append(e.relation)
+        if e.context():
+            lines.append(e.context())
         if e.trimmed:
             lines.append("(Shortened: only the opening and the relevant part are shown.)")
         lines.append(e.text)

@@ -86,7 +86,7 @@ _ORDINAL_SCHEDULE = re.compile(rf"\b({'|'.join(_ORDINALS)})\s+schedule\b", re.IG
 
 
 def _source_mentions(e: Evidence) -> set[tuple[str, str]]:
-    text = f"{e.header}\n{e.relation}\n{e.text}"
+    text = f"{e.header}\n{e.context()}\n{e.text}"
     found = mentions(text)
     # "the Third Schedule" is how an Act names what an answer calls "Schedule III"
     for m in _ORDINAL_SCHEDULE.finditer(text):
@@ -117,24 +117,39 @@ def sentences(text: str) -> list[str]:
     return out
 
 
-def remove_invalid_ids(answer: str, n_sources: int) -> tuple[str, list[int]]:
-    """Drop source numbers that point nowhere: "[7]" with 5 sources; "[2, 9]" -> "[2]"."""
+def remove_invalid_ids(answer: str, n_sources: int, by_section: dict[int, int] | None = None) -> tuple[str, list[int]]:
+    """Drop source numbers that point nowhere: "[7]" with 5 sources; "[2, 9]" -> "[2]".
+    by_section: a source's section number -> its source number, for sections only one source has.
+    The model sometimes writes the section's number for the source's ("[22]" for Section 22, the
+    fourth source): that one is put right, not dropped."""
     bad: list[int] = []
+    by_section = by_section or {}
 
     def fix(m: re.Match) -> str:
         nums = [int(x) for x in re.split(r"\s*[,;]\s*", m.group(1))]
-        good = [n for n in nums if 1 <= n <= n_sources]
-        bad.extend(n for n in nums if n not in good)
+        nums = [n if 1 <= n <= n_sources else by_section.get(n, n) for n in nums]
+        good = list(dict.fromkeys(n for n in nums if 1 <= n <= n_sources))
+        bad.extend(n for n in nums if not 1 <= n <= n_sources)
         return f"[{', '.join(map(str, good))}]" if good else ""
 
     return _CITE.sub(fix, answer), bad
+
+
+def _section_numbers(evidence: list[Evidence]) -> dict[int, int]:
+    """Section number -> source number, for the numbers exactly one source has."""
+    found: dict[int, list[int]] = {}
+    for e in evidence:
+        number = e.ref.rpartition(" ")[2]
+        if number.isdigit():
+            found.setdefault(int(number), []).append(e.n)
+    return {s: ns[0] for s, ns in found.items() if len(ns) == 1}
 
 
 def verify(answer: str, evidence: list[Evidence], question: str = "") -> tuple[str, Verification]:
     """The answer with invalid source numbers removed, and what the checks found. Provisions
     and figures named in the question are not counted as invented ("498A" in "498A ka case kya
     hota hai"; the dates in a case brief's facts)."""
-    fixed, bad = remove_invalid_ids(answer, len(evidence))
+    fixed, bad = remove_invalid_ids(answer, len(evidence), _section_numbers(evidence))
     v = Verification(invalid_ids=sorted(set(bad)))
     body = strip_code_written(fixed)
 
@@ -143,7 +158,7 @@ def verify(answer: str, evidence: list[Evidence], question: str = "") -> tuple[s
     asked = mentions(question) | {(kind, n.upper()) for n in re.findall(r"\b\d+[A-Z]{0,2}\b", question, re.IGNORECASE)
                                   for kind in ("section", "article")}
     known: set[tuple[str, str]] = set().union(*by_n.values()) | asked
-    source_text = "".join(f"\n{e.header}\n{e.relation}\n{e.text}" for e in evidence)
+    source_text = "".join(f"\n{e.header}\n{e.context()}\n{e.text}" for e in evidence)
     v.unsupported_provisions = sorted({f"{k.title()} {n}" for k, n in mentions(body) if (k, n) not in known})
 
     # figures may come from the sources or from the question itself (dates in a case's facts)

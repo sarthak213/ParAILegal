@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.answer import urgent
+from app.answer.context import Context
 from app.answer.evidence import Evidence, assemble, render
 from app.answer.followup import Previous, is_follow_up
 from app.answer.gate import CAVEAT, EVIDENCE_HITS, NO_CLEAR_MATCH, SOURCES_ONLY, Decision, decide
@@ -68,9 +69,10 @@ def lead(outcome: str, reason: str, unknown: list[str]) -> str:
 
 
 def prepare(query: str, engine: Any, k: int, mode: str | None = None,
-            previous: Previous | None = None) -> Prepared:
+            previous: Previous | None = None, context: Context | None = None) -> Prepared:
     """mode: research / summarise / advocate; if None, read from a "SUMMARISE: ..." prefix.
-    previous: the question answered just before, and the sources shown with it (app/answer/followup.py)."""
+    previous: the question answered just before, and the sources shown with it (app/answer/followup.py).
+    context: the amendment history and the judgments, for what the model is told about each provision."""
     prefix, question = strip_mode(query)
     mode = mode_of(mode or prefix)
     parsed = engine.parse(question)
@@ -95,7 +97,7 @@ def prepare(query: str, engine: Any, k: int, mode: str | None = None,
         nearest = [] if (d.unknown or "another country" in d.reason or not hits) else hits[:NEAREST]
         return Prepared(query, d.outcome, d.reason, nearest,
                         fallback=notice + sources_only_answer(nearest, lead(d.outcome, d.reason, d.unknown)), **common)
-    evidence = assemble(d.evidence, engine)
+    evidence = assemble(d.evidence, engine, context)
     sources = [e.hit for e in evidence]
     return Prepared(query, d.outcome, d.reason, sources, evidence, render(evidence),
                     fallback=notice + sources_only_answer(sources, lead(d.outcome, d.reason, d.unknown)), **common)
