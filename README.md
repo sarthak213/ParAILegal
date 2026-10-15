@@ -10,7 +10,7 @@ It is for law students, practising advocates and the general public, and covers 
 
 ParAILegal runs as a desktop app for Windows 10 and 11 (64-bit), and works offline once set up.
 
-1. Download **`ParAILegal_0.1.1_x64-setup.exe`** (271 MB) from the [Releases page](https://github.com/sarthak213/ParAILegal/releases/latest).
+1. Download the installer, **`ParAILegal_<version>_x64-setup.exe`** (about 270 MB), from the [latest release](https://github.com/sarthak213/ParAILegal/releases/latest).
 2. Run it. It installs for your user only, so no administrator rights are needed.
 3. Open ParAILegal and go to **Downloads** to fetch the rest once. These are hosted on Hugging Face:
 
@@ -28,19 +28,13 @@ The app installs to `%LOCALAPPDATA%\ParAILegal`; its downloads go to `%LOCALAPPD
 
 The installer is **not code-signed**, so Windows SmartScreen will warn that it is from an unknown publisher the first time you run it. To go ahead, choose **More info**, then **Run anyway**.
 
-Check that your copy is the one published here before you run it. In PowerShell:
+Check that your copy is the one published here before you run it. Each release's notes give its installer's SHA-256. Compare it with your copy's, in PowerShell:
 
 ```powershell
-Get-FileHash .\ParAILegal_0.1.1_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ParAILegal_<version>_x64-setup.exe -Algorithm SHA256
 ```
 
-The hash should be:
-
-```text
-2fc0a2bf7cddde5aec17fb818cc7d231e4e4930c51a834a284bd2cdd20d93eab
-```
-
-If it differs, do not run the file.
+If they differ, do not run the file.
 
 ## What it does
 
@@ -143,6 +137,19 @@ cd backend
 .\.venv\Scripts\python -m scripts.stage_desktop                   # the installer's resources
 cd ..\frontend
 npx tauri build                                                   # src-tauri\target\release\bundle\nsis
+```
+
+**Releasing.** Releases are built and published by GitHub Actions ([release.yml](.github/workflows/release.yml)). To publish a new version:
+1. Raise `version` in `frontend/src-tauri/tauri.conf.json` and `frontend/src-tauri/Cargo.toml`.
+2. Merge to `master`.
+
+The workflow then builds the installer, checks the bundled backend, and publishes release `v<version>` with the installer's SHA-256 in its notes. A push that keeps the version publishes nothing.
+
+GitHub's build machine gets the resources that are not in this repository (search pack, amendments, llama.cpp, search models) as one archive from Hugging Face, checked against `backend/desktop/build-resources.json`. After rebuilding the corpus or the pack, publish a new archive and commit the updated file:
+
+```powershell
+.\.venv\Scripts\python -m scripts.stage_desktop --no-backend --out $env:TEMP\stage --archive $env:TEMP\build-resources.zip
+.\.venv\Scripts\python -m scripts.publish_build_resources $env:TEMP\build-resources.zip --owner Sarthak213
 ```
 
 ## License

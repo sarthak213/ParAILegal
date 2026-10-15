@@ -1,0 +1,149 @@
+# Builds the Windows installer and publishes it as a GitHub release, whenever master carries a version
+# (frontend/src-tauri/tauri.conf.json) that has no release yet. Any other push stops at the first step.
+#
+# To release: raise "version" in tauri.conf.json (and in src-tauri/Cargo.toml), merge to master.
+#
+# What GitHub's machine builds from:
+#   - this repository (the app, the backend, the Tauri shell)
+#   - the build resources: the search pack, the amendments, llama.cpp and the search models, which
+#     are built or fetched locally and are not in the repository. Downloaded from the URL in
+#     backend/desktop/build-resources.json and checked against its SHA-256
+#     (backend/scripts/publish_build_resources.py)
+#   - Python packages at the exact versions in backend/desktop/requirements-desktop.txt, npm packages
+#     from frontend/package-lock.json, Rust crates from frontend/src-tauri/Cargo.lock
+#
+# Before publishing, the bundled backend is started on the staged resources and must come up ready,
+# offer the three first-run downloads, and answer a search.
+
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version, and whether it is released
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = (Get-Content frontend/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+          gh release view "v$v" --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "v$v is already released: nothing to do"
+            "release=false" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "v$v has no release yet: building it"
+            "release=true" >> $env:GITHUB_OUTPUT
+          }
+          exit 0
+
+      - uses: actions/setup-python@v5
+        if: steps.version.outputs.release == 'true'
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: backend/desktop/requirements-desktop.txt
+
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.release == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.version.outputs.release == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.release == 'true'
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Build resources (downloaded, checked)
+        if: steps.version.outputs.release == 'true'
+        run: |
+          $r = Get-Content backend/desktop/build-resources.json -Raw | ConvertFrom-Json
+          $zip = Join-Path $env:RUNNER_TEMP "build-resources.zip"
+          Invoke-WebRequest -Uri $r.url -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ((Get-Item $zip).Length -ne $r.size -or $hash -ne $r.sha256) {
+            throw "build resources: size or SHA-256 differs from backend/desktop/build-resources.json"
+          }
+          Expand-Archive -Path $zip -DestinationPath frontend/src-tauri/resources -Force
+
+      - name: Backend bundle (PyInstaller)
+        if: steps.version.outputs.release == 'true'
+        working-directory: backend
+        run: |
+          python -m pip install --disable-pip-version-check -r desktop/requirements-desktop.txt
+          pyinstaller parailegal-backend.spec --noconfirm
+          Move-Item dist/parailegal-backend ../frontend/src-tauri/resources/backend
+
+      - name: Check the bundled backend
+        if: steps.version.outputs.release == 'true'
+        run: |
+          $res = (Resolve-Path frontend/src-tauri/resources).Path
+          $data = Join-Path $env:RUNNER_TEMP "data"
+          $port = 8765
+          $proc = Start-Process -FilePath "$res/backend/parailegal-backend.exe" -PassThru `
+            -ArgumentList "--resources", "`"$res`"", "--home", "`"$data`"", "--port", $port
+          try {
+            $ready = $null
+            foreach ($i in 1..60) {
+              Start-Sleep -Seconds 2
+              try { $ready = Invoke-RestMethod "http://127.0.0.1:$port/ready" } catch { continue }
+              if ($ready.status -in @("ready", "failed")) { break }
+            }
+            if ($ready.status -ne "ready") { throw "backend not ready: $($ready | ConvertTo-Json -Compress)" }
+            $setup = Invoke-RestMethod "http://127.0.0.1:$port/api/v1/setup"
+            $available = @($setup.items | Where-Object { $_.available }).Count
+            if ($available -ne 3) { throw "expected 3 downloads available, found $available" }
+            $search = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/api/v1/search" `
+              -ContentType "application/json" -Body '{"query": "punishment for theft", "k": 3}'
+            if (-not $search.results) { throw "search returned nothing" }
+            Write-Host "backend ready; 3 downloads available; search: $($search.results[0].citation)"
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Get-Content (Join-Path $data "logs/backend.log") -Tail 20 -ErrorAction SilentlyContinue
+          }
+
+      - name: Installer (Tauri)
+        if: steps.version.outputs.release == 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tauri build
+
+      - name: Publish the release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $exe = "frontend/src-tauri/target/release/bundle/nsis/ParAILegal_${v}_x64-setup.exe"
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB)
+          $notes = (Get-Content .github/release-notes.md -Raw).Replace("{version}", $v).Replace("{sha256}", $sha).Replace("{size}", "$mb MB")
+          $notesFile = Join-Path $env:RUNNER_TEMP "notes.md"
+          Set-Content -Path $notesFile -Value $notes -Encoding utf8
+          gh release create "v$v" $exe --target $env:GITHUB_SHA --title "ParAILegal $v (Windows)" --notes-file $notesFile
+          Write-Host "released v$v, SHA-256 $sha"
