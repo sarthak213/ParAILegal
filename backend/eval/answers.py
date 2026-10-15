@@ -84,13 +84,19 @@ def sample() -> list[dict]:
     return rows
 
 
-def prepare_all(questions: list[dict]) -> list[tuple[dict, object]]:
+def prepare_all(questions: list[dict], with_context: bool = True) -> list[tuple[dict, object]]:
+    """with_context: each provision's old <-> new link, amendment history and leading judgments, as
+    the app gives them (app/answer/context.py); without, only links between the sources shown."""
+    from app.answer.context import Context
     from app.answer.pipeline import prepare
     from app.core.config import settings
+    from app.judgments.law_at_time import History
+    from app.judgments.store import JudgmentStore
     from app.search.engine import SearchEngine
 
     engine = SearchEngine.from_corpus(dense=settings.DENSE_MODEL, rerank=settings.RERANK_MODEL)
-    return [(q, prepare(q["query"], engine, settings.TOP_K_SEARCH)) for q in questions]
+    context = Context(History(), JudgmentStore.open(dense_key=None)) if with_context else None
+    return [(q, prepare(q["query"], engine, settings.TOP_K_SEARCH, context=context)) for q in questions]
 
 
 def score(q: dict, p, answer: str) -> dict:
@@ -193,11 +199,12 @@ def main() -> None:
     ap.add_argument("--model", type=Path, help="GGUF file of the answer model")
     ap.add_argument("--name", help="result name, e.g. 4b")
     ap.add_argument("--compare", nargs="+", help="print saved results side by side")
+    ap.add_argument("--no-context", action="store_true", help="without the context lines (app/answer/context.py)")
     args = ap.parse_args()
     if args.compare:
         compare(args.compare)
         return
-    prepared = prepare_all(sample())
+    prepared = prepare_all(sample(), with_context=not args.no_context)
     rows = asyncio.run(run_model(args.model.resolve(), args.name, prepared))
     out = {"model": args.model.name, "summary": summary(rows), "rows": rows}
     RESULTS.mkdir(exist_ok=True)

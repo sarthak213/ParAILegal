@@ -59,7 +59,7 @@ def test_repealed_provision_brings_its_replacement():
     corpus = Corpus({"IPC 302": [IPC_302], "BNS 103": [BNS_103]})
     ev = assemble([{**IPC_302, "_ref": "IPC 302"}], corpus)
     assert [e.ref for e in ev] == ["IPC 302", "BNS 103"]
-    assert ev[1].linked and ev[1].relation.startswith("Corresponds to Section 302")
+    assert ev[1].linked and ev[1].relation.startswith("Formerly Section 302")
     assert ev[0].relation.startswith("Now Section 103") and ev[0].relation.endswith("[2]")
     text = render(ev)
     assert text.startswith("[1] Section 302 — Punishment for murder, The Indian Penal Code")

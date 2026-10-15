@@ -26,6 +26,12 @@ def test_invalid_source_numbers_are_removed():
     assert text == "A [1]. B . C [2]." and bad == [7, 9]
 
 
+def test_a_section_number_written_for_its_source_number_is_put_right():
+    # four sources, the fourth Section 22: "[22]" means that source; "[18]" is two sources' number
+    text, bad = remove_invalid_ids("A [22]. B [4, 22]. C [18].", 4, {22: 4, 14: 1})
+    assert text == "A [4]. B [4]. C ." and bad == [18]
+
+
 def test_a_grounded_answer_passes():
     answer = ("Dishonour of a cheque is punishable with imprisonment up to two years [1]. "
               "Notice must be given as section 142 requires [1]. "
