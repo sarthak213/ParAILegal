@@ -1,4 +1,4 @@
-import { MessageSquare, Plus, Trash2, Clock, Search, Briefcase } from 'lucide-react'
+import { MessageSquare, Plus, Trash2, Clock, Search, Briefcase, Download } from 'lucide-react'
 import type { HistoryEntry } from '../../types'
 import { formatRelativeTime } from '../../utils/citations'
 import type { BackendStatus } from '../../hooks/useBackend'
@@ -13,9 +13,10 @@ interface Props {
   onNew: () => void
   view: View
   onView: (view: View) => void
+  setupNeeded?: boolean  // a recommended download is not installed yet
 }
 
-export type View = 'research' | 'case'
+export type View = 'research' | 'case' | 'setup'
 
 const STATUS_LABELS: Record<BackendStatus, string> = {
   checking: 'Connecting…',
@@ -27,7 +28,7 @@ const STATUS_LABELS: Record<BackendStatus, string> = {
 
 export function Sidebar({
   entries, activeId, status,
-  onSelect, onDelete, onClear, onNew, view, onView,
+  onSelect, onDelete, onClear, onNew, view, onView, setupNeeded,
 }: Props) {
   return (
     <aside className="sidebar">
@@ -46,6 +47,11 @@ export function Sidebar({
             <Briefcase size={13} /> Case Builder
           </button>
         </div>
+        <button className={`sidebar__downloads${view === 'setup' ? ' sidebar__downloads--on' : ''}`}
+                onClick={() => onView('setup')}>
+          <Download size={13} /> Downloads
+          {setupNeeded && <span className="sidebar__downloads-dot" aria-label="Downloads needed" />}
+        </button>
         {view === 'research' && (
           <button className="sidebar__new-btn" onClick={onNew}>
             <Plus size={14} />

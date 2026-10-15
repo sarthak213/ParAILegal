@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+from app.core.config import MODELS_DIR  # noqa: E402  (search models ship in the install)
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,7 @@ from app.api.routes.answer import router as answer_router
 from app.api.routes.admin import router as admin_router
 from app.api.routes.case import router as case_router
 from app.api.routes.judgments import router as judgments_router
+from app.api.routes.setup import router as setup_router
 from app.middleware.error_handler import global_exception_handler
 from app.middleware.request_logger import log_requests
 
@@ -32,6 +33,7 @@ app.include_router(answer_router)
 app.include_router(admin_router)
 app.include_router(case_router)
 app.include_router(judgments_router)
+app.include_router(setup_router)
 app.add_exception_handler(Exception, global_exception_handler)
 app.middleware("http")(log_requests)
 @app.get("/health")

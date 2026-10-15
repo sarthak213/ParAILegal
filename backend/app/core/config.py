@@ -1,11 +1,21 @@
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = BASE_DIR / "data"
-MODELS_DIR = BASE_DIR / "models"
+# Two folders (docs/PACKAGING.md). In development both are backend/, so nothing moves.
+#   resources  read-only, inside the install: the law pack, amendments, search models, model engine
+#   home       the user's data (%LOCALAPPDATA%\ParAILegal): what is downloaded on first run, the
+#              answer and Case Builder models and the Supreme Court judgments
+RESOURCES_DIR = Path(os.environ.get("PARAILEGAL_RESOURCES") or BASE_DIR)
+HOME_DIR = Path(os.environ.get("PARAILEGAL_HOME") or BASE_DIR)
+DATA_DIR = RESOURCES_DIR / "data"
+MODELS_DIR = RESOURCES_DIR / "models"
 STATUTES_DIR = DATA_DIR / "statutes"
+AMENDMENTS_DIR = DATA_DIR / "amendments"
+LLM_DIR = HOME_DIR / "models" / "llm"             # downloaded
+JUDGMENTS_DIR = HOME_DIR / "data" / "judgments"   # downloaded: index/ and citator.json
 
 
 class Settings(BaseSettings):
@@ -47,7 +57,7 @@ class Settings(BaseSettings):
     # No model file -> answers are written by code from the evidence (sources only)
     LLM_ENGINE_DIR:      Path  = MODELS_DIR / "engine"  # llama.cpp builds in cpu/ and vulkan/
     LLM_DEVICE:          str   = "auto"   # auto (GPU, then CPU), gpu or cpu: see app/llm/server.py
-    LLM_MODEL_PATH:      Path  = MODELS_DIR / "llm" / "Qwen3.5-4B-Q4_K_M.gguf"
+    LLM_MODEL_PATH:      Path  = LLM_DIR / "Qwen3.5-4B-Q4_K_M.gguf"
     LLM_THREADS:         int   = 6      # generation threads: about half the cores, to stay cool
     LLM_BATCH_THREADS:   int   = 8      # prompt-processing threads
     LLM_CTX:             int   = 8192
@@ -56,7 +66,7 @@ class Settings(BaseSettings):
     # the Case Builder's model (facts, elements, comparisons, brief): the 9B made fewer factual slips in
     # fact comparisons than the 4B, at about twice the time; the answer model is used if this file is missing.
     # One model is loaded at a time: switching between Research and the Case Builder swaps them.
-    CASE_MODEL_PATH:     Path  = MODELS_DIR / "llm" / "Qwen3.5-9B-Q4_K_M.gguf"
+    CASE_MODEL_PATH:     Path  = LLM_DIR / "Qwen3.5-9B-Q4_K_M.gguf"
 
     TOP_K_SEARCH:        int   = 15
     TOP_K_ANSWER:        int   = 5

@@ -29,8 +29,10 @@ from typing import Any
 
 import numpy as np
 
-INDEX_DIR = Path(__file__).resolve().parents[2] / "data" / "judgments" / "index"
-CITATOR = Path(__file__).resolve().parents[2] / "data" / "judgments" / "citator.json"
+from app.core.config import JUDGMENTS_DIR  # noqa: E402  (the data folder: downloaded on first run)
+
+INDEX_DIR = JUDGMENTS_DIR / "index"
+CITATOR = JUDGMENTS_DIR / "citator.json"
 RRF_K = 60
 AUTHORITY = 0.08  # weight of how often later judgments cite a judgment (JudgmentStore.search)
 
