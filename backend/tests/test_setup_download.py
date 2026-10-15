@@ -85,3 +85,22 @@ def test_the_shipped_manifest_lists_the_three_downloads():
     assert set(items) == {"answer-model", "judgments", "case-model"}
     assert items["case-model"].size > 5_000_000_000 and not items["case-model"].required
     assert all(len(f.sha256) == 64 and f.size > 0 for i in items.values() for f in i.files)
+
+
+def test_a_connection_reset_on_the_default_route_falls_back_to_ipv4(tmp_path, monkeypatch):
+    from app.setup import download
+
+    def reset(request):
+        raise httpx.ConnectError("[WinError 10054] An existing connection was forcibly closed")
+
+    made = []
+
+    def client(ipv4=False):
+        made.append(ipv4)
+        return server() if ipv4 else httpx.AsyncClient(transport=httpx.MockTransport(reset))
+
+    monkeypatch.setattr(download, "_client", client)
+    d = Downloader(tmp_path, [item()])
+    run(d)
+    assert made == [False, True] and d.progress["answer-model"].state == "done"
+    assert (tmp_path / "models/llm/model.gguf").read_bytes() == DATA
