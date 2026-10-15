@@ -80,6 +80,7 @@ class Downloader:
     on_done: Any = None  # called with the item's id when it is installed (the app takes it up)
     progress: dict[str, Progress] = field(default_factory=dict)
     _task: asyncio.Task | None = None
+    _ipv4: bool = False  # set after a connection failed over the default route (see _run)
     _current: str = ""
 
     # state
@@ -143,13 +144,23 @@ class Downloader:
 
     async def _run(self, item: Item) -> None:
         p = self.progress[item.id]
-        client = self.client or httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=True)
+        client = self.client or _client(ipv4=self._ipv4)
         try:
             for f in item.files:
                 if self.target(f).is_file() and self.target(f).stat().st_size == f.size:
                     continue
                 p.file = f.path
-                await self._fetch(client, f, p)
+                try:
+                    await self._fetch(client, f, p)
+                except httpx.ConnectError:
+                    if self.client is not None or self._ipv4:
+                        raise
+                    # some networks' IPv6 route resets connections (seen to Hugging Face's CDN, where
+                    # IPv4 got through every time): IPv4 from now on, and this file again
+                    await client.aclose()
+                    self._ipv4 = True
+                    client = _client(ipv4=True)
+                    await self._fetch(client, f, p)
             p.state, p.done = "done", item.size
             if self.on_done is not None:
                 self.on_done(item.id)
@@ -191,6 +202,13 @@ class Downloader:
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(part, target)
         p.state = "downloading"
+
+
+def _client(ipv4: bool = False) -> httpx.AsyncClient:
+    """The HTTP client for downloads; ipv4: connect over IPv4 only (bound to 0.0.0.0)."""
+    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=2) if ipv4 else \
+        httpx.AsyncHTTPTransport(retries=2)
+    return httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=True)
 
 
 def _sha256(path: Path) -> str:
