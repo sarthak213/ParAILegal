@@ -10,7 +10,7 @@ It is for law students, practising advocates and the general public, and covers 
 
 ParAILegal runs as a desktop app for Windows 10 and 11 (64-bit), and works offline once set up.
 
-1. Download **`ParAILegal_0.1.0_x64-setup.exe`** (271 MB) from the [Releases page](https://github.com/sarthak213/ParAILegal/releases/latest).
+1. Download **`ParAILegal_0.1.1_x64-setup.exe`** (271 MB) from the [Releases page](https://github.com/sarthak213/ParAILegal/releases/latest).
 2. Run it. It installs for your user only, so no administrator rights are needed.
 3. Open ParAILegal and go to **Downloads** to fetch the rest once. These are hosted on Hugging Face:
 
@@ -22,7 +22,7 @@ ParAILegal runs as a desktop app for Windows 10 and 11 (64-bit), and works offli
 
    Downloads resume if they stop, and each file is checked against its SHA-256 before the app uses it.
 
-The app and its downloads live in `%LOCALAPPDATA%\ParAILegal`. A computer with 16 GB of RAM is recommended for the Case Builder model; the answer model needs much less. A graphics card that supports Vulkan (including recent Intel, AMD and NVIDIA chips) makes answers faster; without one, the app uses the processor.
+The app installs to `%LOCALAPPDATA%\ParAILegal`; its downloads go to `%LOCALAPPDATA%\in.parailegal.desktop`. To remove everything, uninstall it from Windows' Apps settings and tick **Delete the application data**. A computer with 16 GB of RAM is recommended for the Case Builder model; the answer model needs much less. A graphics card that supports Vulkan (including recent Intel, AMD and NVIDIA chips) makes answers faster; without one, the app uses the processor.
 
 ### The installer is not code-signed
 
@@ -31,13 +31,13 @@ The installer is **not code-signed**, so Windows SmartScreen will warn that it i
 Check that your copy is the one published here before you run it. In PowerShell:
 
 ```powershell
-Get-FileHash .\ParAILegal_0.1.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\ParAILegal_0.1.1_x64-setup.exe -Algorithm SHA256
 ```
 
 The hash should be:
 
 ```text
-4d7b19c5652a6239821a11c835ea7c008ebd93c16ecd32792591d8217ff22c8e
+2fc0a2bf7cddde5aec17fb818cc7d231e4e4930c51a834a284bd2cdd20d93eab
 ```
 
 If it differs, do not run the file.
@@ -117,7 +117,7 @@ python -m pip install -r requirements.txt
 
 # use the installed app's data: the law and search models, and the downloads
 $env:PARAILEGAL_RESOURCES = "$env:LOCALAPPDATA\ParAILegal\resources"
-$env:PARAILEGAL_HOME = "$env:LOCALAPPDATA\ParAILegal"
+$env:PARAILEGAL_HOME = "$env:LOCALAPPDATA\in.parailegal.desktop"
 python -m uvicorn app.main:app --port 8000
 ```
 
