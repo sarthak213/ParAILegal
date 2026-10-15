@@ -25,6 +25,7 @@ import hashlib
 import inspect
 import json
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,9 +50,10 @@ def sources(settings: Any) -> list[Path]:
 
 
 def fingerprint(settings: Any) -> str | None:
-    """None when the corpus sources are not here (a desktop install): the pack is all there is."""
+    """None when the corpus sources are not here, or in the bundled desktop app (PyInstaller: no
+    source code to hash, and no way to rebuild): the pack is all there is."""
     files = [p for p in sources(settings) if p.exists()]
-    if not files:
+    if not files or getattr(sys, "frozen", False):
         return None
     from app.infrastructure.loaders import dataset_loader
     from app.search import bm25, engine, legal_data

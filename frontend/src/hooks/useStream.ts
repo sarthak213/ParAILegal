@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import type { SourceChunk, AppState, QueryMode, Verification } from '../types'
+import { API_BASE } from '../api'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 /** What the pipeline is doing before the first answer token arrives. */
 export type StreamStage = 'searching' | 'reading' | 'loading' | 'thinking' | 'writing'
