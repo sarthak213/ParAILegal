@@ -1,265 +1,191 @@
-# ParAILegal — Backend
+# ParAILegal: backend
 
-The FastAPI backend for [ParAILegal](../README.md). It is an Indian legal research API. It retrieves relevant passages from the Constitution of India, the BNS, BNSS, BSA, and landmark judgments, then uses a language model to produce a grounded answer with source citations.
+The FastAPI backend of [ParAILegal](../README.md), the offline Indian legal research app. Everything runs locally:
+- search over the Constitution, 892 Central Acts and their amendment history, and 38,358 Supreme Court judgments
+- local language models through llama.cpp
+- no API keys or cloud services
 
-The project is a FastAPI service backed by Qdrant Cloud. Queries are routed by legal domain, rewritten for retrieval, embedded with Cohere, searched with Qdrant, fused with reciprocal rank fusion, and optionally answered by Sarvam.
+In the desktop app, the window starts this backend in the background (`desktop_server.py`, bundled by PyInstaller). In development you run it with uvicorn.
 
 > This is a research tool, not legal advice. Verify every provision against the official Gazette and consult a qualified advocate for legal advice.
 
-## Features
-
-- Semantic search over constitutional provisions, statutes, and judgments
-- Automatic routing to `constitution`, `statutes`, `judgements`, or `all`
-- Query rewriting through Groq using a domain-specific prompt
-- Asymmetric Cohere embeddings: documents use `search_document`, queries use `search_query`
-- Qdrant vector storage with one collection and `source_type` payload filtering
-- RRF fusion of original and rewritten query results
-- Grounded legal answers through Sarvam with citation-oriented prompting
-- Blocking JSON answers and Server-Sent Events (SSE) streaming answers
-- Readiness checks and index statistics for deployment monitoring
-
-## Architecture
+## How an answer is made
 
 ```mermaid
 flowchart LR
-    Client --> FastAPI
-    FastAPI --> Router[QueryRouter]
-    Router --> Rewriter[Groq Query Rewriter]
-    Rewriter --> Embed[Cohere Embeddings]
-    Embed --> Qdrant[Qdrant Cloud]
-    Qdrant --> Fusion[RRF Fusion]
-    Fusion --> Search[Search Response]
-    Fusion --> Sarvam[Sarvam Answerer]
-    Sarvam --> Answer[Answer Response / SSE]
+    Q[Question] --> Search[Search<br/>BM25 + bge-small dense<br/>+ MiniLM reranker]
+    Search --> Gate[Gate<br/>answer / caveat / sources only]
+    Gate --> Evidence[Evidence<br/>whole provisions, old/new links,<br/>history, leading judgments]
+    Evidence --> LLM[llama.cpp<br/>Qwen3.5 4B]
+    LLM --> Verify[Verifier]
+    Verify --> A[Answer with numbered citations]
 ```
 
-At startup, the lifespan handler verifies the cloud APIs and checks each Qdrant-backed index. If a corpus is missing from Qdrant, it loads the corresponding local JSONL files, embeds the chunks, and uploads them. Existing vectors are reused on later starts.
+- **Search** (`app/search`): a prebuilt search pack.
+  - It combines keyword search (SQLite FTS5) with sentence vectors (bge-small via fastembed, ONNX) and a cross-encoder reranker (MiniLM).
+  - It handles section and article numbers, old and new criminal codes, everyday and Hindi-English words, and typos.
+- **Gate** (`app/answer/gate.py`): from the search scores, decides whether to answer, answer with a caveat, or only list the closest provisions.
+- **Evidence** (`app/answer/evidence.py`, `context.py`): what the model reads, written by code. For each provision:
+  - its text
+  - what it replaced or what replaced it ("Formerly Section 154 of the CrPC")
+  - its latest amendments
+  - the Supreme Court judgments that deal most with it (names only)
+- **Answer model** (`app/llm`): llama.cpp's `llama-server`, run as a child process.
+  - It runs on the GPU through Vulkan when it can, otherwise on the processor.
+  - It is started on the first question and stopped after 10 idle minutes.
+  - It is tied to the backend's process, so it never outlives it.
+- **Verifier** (`app/answer/verify.py`): removes citations that point nowhere, and flags any provision or figure the sources do not contain, and sentences that state the law without a citation.
 
-## Repository Layout
+Without the answer model, answers list the matching provisions (sources only).
 
-All paths are relative to `backend/`, and every command below is run from `backend/`.
+## Repository layout
+
+All paths are relative to `backend/`; run every command from here.
 
 ```text
 app/
-  main.py                         FastAPI application and health endpoints
-  api/routes/                     Search, answer, and admin routes
-  schemas/                        Pydantic request and response models
-  core/                            Settings, lifecycle, and logging
-  services/
-    rag_services.py               RAG orchestration
-    routing_service.py            Legal domain classification
-    retrieval/                    Index lifecycle, retrieval, and RRF fusion
-  infrastructure/
-    llm/                           Cohere, Groq, and Sarvam integrations
-    qdrant/                        Qdrant vector-store wrapper
-    loaders/                       JSONL corpus loaders
-data/                              Local JSONL corpora (ignored by Git)
-ingest.py                          Explicit corpus ingestion utility
-tests/test_suite.py                HTTP and router test suite
-qdrant_test.py                     Qdrant payload-index maintenance utility
-qdrantPayload.py                   Qdrant source-type count utility
-requirements.txt                   Python dependencies
+  main.py               FastAPI app, /health and /ready
+  api/routes/           search, answer, judgments, case (Case Builder), setup (downloads), admin
+  core/config.py        settings and the two folders (see Configuration)
+  search/               the search engine and its pack: BM25, dense vectors, reranker, query parsing
+  answer/               gate, evidence and context, prompts, verifier, follow-ups, urgent notices
+  llm/                  llama-server (start, stop, GPU or CPU) and its client
+  case/                 Case Builder: facts, offences, elements, BNSS schedule, precedents
+  judgments/            judgments store and search, citator, law at the time
+  history/              amendment history from India Code's footnotes, earlier wordings
+  setup/                first-run downloads: manifest.json, resumable checked downloader
+  services/             the search service; v1 (cloud) code kept for SEARCH_ENGINE=v1
+scripts/                building the corpus and indexes; packaging (below)
+eval/                   evaluations (below)
+tests/                  pytest suite
+desktop/                desktop build: pinned requirements, build-resources record, third-party notices
+desktop_server.py       the backend as the desktop app runs it
+parailegal-backend.spec PyInstaller recipe for the desktop backend
 ```
 
-The active vector backend is Qdrant. The `app/infrastructure/faiss/` module is retained as legacy code and is not used by the current RAG wiring.
+## Running it
 
-## Requirements
-
-- Python 3.10 or newer
-- A Qdrant Cloud project or self-hosted Qdrant instance
-- API keys for Sarvam, Groq, and Cohere
-- The JSONL corpus files listed below
-
-Install the runtime and test dependencies in a virtual environment:
+Developed with Python 3.14 on Windows.
 
 ```powershell
-cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --port 8000
 ```
+
+The API is at `http://127.0.0.1:8000`, with interactive docs at `/docs`.
+
+**Data.** The backend needs data that is not in this repository:
+- the search pack and amendment history
+- the search models and the llama.cpp engine
+- optionally, the answer and Case Builder models and the judgments
+
+The quickest way to get them is to install the desktop app and run its Downloads, then point this backend at its folders:
+
+```powershell
+$env:PARAILEGAL_RESOURCES = "$env:LOCALAPPDATA\ParAILegal\resources"
+$env:PARAILEGAL_HOME = "$env:LOCALAPPDATA\in.parailegal.desktop"
+```
+
+Without these, it looks in `backend/data` and `backend/models`. Those can be rebuilt from the official sources with the scripts below.
+
+Start-up takes a few seconds; `/ready` reports `starting`, then `ready` (or `failed` with the reason).
 
 ## Configuration
 
-Create a `.env` file in `backend/`. It is intentionally ignored by Git.
-
-```dotenv
-SARVAM_API_KEY=your-sarvam-api-key
-SARVAM_MODEL=sarvam-105b
-
-GROQ_API_KEY=your-groq-api-key
-GROQ_MODEL=llama-3.1-8b-instant
-
-COHERE_API_KEY=your-cohere-api-key
-COHERE_EMBED_MODEL=embed-multilingual-v3.0
-COHERE_RERANK_MODEL=rerank-multilingual-v3.0
-
-QDRANT_URL=https://your-qdrant-endpoint
-QDRANT_API_KEY=your-qdrant-api-key
-QDRANT_COLLECTION=ParAILegal
-```
-
-Optional retrieval and retry settings have defaults in `app/core/config.py`:
+Settings live in `app/core/config.py`; any of them can be set as an environment variable or in `backend/.env`.
 
 | Setting | Default | Purpose |
-| --- | ---: | --- |
-| `TOP_K_SEARCH` | `15` | Maximum retrieved results before answer truncation |
-| `TOP_K_ANSWER` | `5` | Sources supplied to answer generation |
-| `TEMPERATURE_REWRITE` | `0.1` | Groq rewrite temperature |
-| `TEMPERATURE_ANSWER` | `0.2` | Sarvam answer temperature |
-| `MIN_SCORE_THRESHOLD` | `0.1` | Minimum retrieval score setting |
-| `BATCH_SIZE` | `32` | Embedding batch size |
-| `MAX_RETRIES` | `3` | Query-rewriter retry count |
-| `RETRY_DELAY` | `1.0` | Delay between retries in seconds |
+|---|---|---|
+| `PARAILEGAL_RESOURCES` | `backend/` | Read-only data: `data/pack`, `data/amendments`, `models/engine`, `models/fastembed` |
+| `PARAILEGAL_HOME` | `backend/` | Downloaded data: `models/llm/*.gguf`, `data/judgments`; and `logs` in the desktop app |
+| `PARAILEGAL_MANIFEST` | `app/setup/manifest.json` | Where the first-run downloads come from |
+| `SEARCH_ENGINE` | `v2` | `v2`: offline. `v1`: the old cloud setup (Qdrant, Cohere, Groq, Sarvam; needs their keys) |
+| `DENSE_MODEL` / `RERANK_MODEL` | `bge-small` / `minilm-l6` | Search models; `""` turns one off |
+| `LLM_MODEL_PATH` | `models/llm/Qwen3.5-4B-Q4_K_M.gguf` | Answer model (under the data folder) |
+| `CASE_MODEL_PATH` | `models/llm/Qwen3.5-9B-Q4_K_M.gguf` | Case Builder model; without it the Case Builder is locked |
+| `LLM_DEVICE` | `auto` | `auto` (GPU, then CPU), `gpu` or `cpu` |
+| `LLM_THREADS` / `LLM_BATCH_THREADS` | `6` / `8` | CPU threads, kept down so a laptop stays cool |
+| `LLM_CTX` | `8192` | Model context size |
+| `LLM_IDLE_UNLOAD_S` | `600` | Stop the model after this many idle seconds |
+| `LLM_PRELOAD` | `false` | Load the answer model at start-up instead of on the first question |
 
-## Corpus Data
+## API
 
-Place these files under `backend/data/`:
+Every route except `/health` and `/ready` answers 503 until start-up has finished.
 
-```text
-data/constitution_final.jsonl
-data/bns_clean.jsonl
-data/bnss_clean.jsonl
-data/bsa_clean.jsonl
-data/landmarks.jsonl
-```
+| Route | What it does |
+|---|---|
+| `GET /health`, `GET /ready` | Liveness; readiness with index counts and the models' state |
+| `POST /api/v1/search` | Search: `{query, k, domain}`; `domain` is `constitution`, `statutes`, `judgements` or `all` |
+| `POST /api/v1/answer` | A full answer, as JSON |
+| `POST /api/v1/answer/stream` | The answer as Server-Sent Events (below) |
+| `POST /api/v1/judgments/search`, `GET /api/v1/judgments/{id}` | Supreme Court judgments, with the citator's record |
+| `POST /api/v1/case/facts` → `offences` → `elements` → `precedents` → `compare` → `brief` | The Case Builder, step by step (`brief` streams). Answers 423 until the Case Builder model is installed |
+| `GET /api/v1/setup`, `POST /api/v1/setup/download`, `POST /api/v1/setup/cancel` | First-run downloads: what is installed, start one, pause it |
+| `GET /api/v1/admin/stats` | Index counts |
 
-The Constitution, statute, and judgment loaders normalize each JSONL record into searchable text plus metadata. Constitution citations are synthesized from article, title, and part fields when the source record does not provide one.
+**Answers** take `{query, mode, previous, domain}`:
+- `mode` is `research` (the default), `summarise` (plain language) or `advocate`.
+- `previous` is the question answered just before and its sources' chunk IDs; the backend decides whether the new question follows it up.
 
-The `data/` directory is ignored by Git. Obtain and manage corpus files separately, and do not commit sensitive or licensed source material to this repository.
+**The stream** sends, in order:
+- `sources`
+- `gate`: the outcome, and whether it read the question as a follow-up
+- `status`: loading the model, thinking
+- `token` events
+- `done`: the full answer, its citations, and the verifier's findings
 
-## Ingesting Data
+or `error` on failure.
 
-Use the ingestion script when populating a new Qdrant collection or deliberately rebuilding a corpus:
+The server binds to whatever host you give uvicorn. The desktop app binds `127.0.0.1` only. There is no authentication: keep it local.
 
-```powershell
-python ingest.py
-python ingest.py --corpus constitution
-python ingest.py --corpus statutes
-python ingest.py --corpus judgements
-python ingest.py --force
-```
+## Building the data
 
-`--force` re-embeds and uploads an existing corpus. Ingestion can be slow and subject to provider rate limits. Qdrant persists the uploaded vectors, so normal application startup skips ingestion when the relevant vectors already exist.
+The corpus is built from official sources:
+- India Code's PDFs
+- the Legislative Department's Constitution
+- the Supreme Court judgments on the Registry of Open Data on AWS (CC-BY-4.0)
 
-The helper scripts are operational utilities, not part of the API startup path:
+| Script | Builds |
+|---|---|
+| `build_corpus.py` | The statute corpus and the amendment history, from an India Code harvest |
+| `build_constitution.py` | The Constitution, from the official PDF |
+| `fetch_replaced_statutes.py` | Official texts of repealed codes (IPC, CrPC, Evidence Act, labour laws) |
+| `link_new_codes.py`, `derive_section_links.py` | Old → new section links (criminal codes, labour codes) |
+| `fetch_archived_acts.py`, `fill_old_wordings.py` | Earlier wordings the amendment footnotes leave out, from archived copies |
+| `check_corpus.py` | Quality report; must pass |
+| `build_pack.py` | The search pack from the corpus |
+| `build_judgments.py`, `build_judgments_index.py`, `build_citator.py` | The judgments corpus, its index and the citator |
 
-```powershell
-python qdrantPayload.py    # Count source types in the configured collection
-python qdrant_test.py      # Recreate the source_type payload index and count values
-```
+Run with `PYTHONUTF8=1`: some titles contain characters the Windows console cannot print.
 
-## Running the API
+## Packaging and releases
 
-From `backend/`, start the development server:
+| Script | Does |
+|---|---|
+| `stage_desktop.py` | Puts together what the installer carries; `--no-backend --archive` makes the build-resources archive |
+| `publish_build_resources.py` | Publishes that archive to Hugging Face and records it in `desktop/build-resources.json` |
+| `publish_downloads.py` | Publishes the first-run downloads to Hugging Face and fills in `app/setup/manifest.json` |
 
-```powershell
-python -m uvicorn app.main:app --reload
-```
+Releases are built by GitHub Actions ([release.yml](../.github/workflows/release.yml)): raise the version in `frontend/src-tauri/tauri.conf.json` and `Cargo.toml`, then merge to master. See the [main README](../README.md#development).
 
-The API is available at `http://127.0.0.1:8000`. Interactive OpenAPI documentation is available at `/docs`, and the generated schema is at `/openapi.json`.
-
-Startup may take time on a new Qdrant collection because the application embeds and uploads missing corpora. Check readiness before using search or answer routes.
-
-## API Endpoints
-
-### Health and readiness
-
-```http
-GET /health
-GET /ready
-```
-
-`/health` returns `{"status":"ok"}`. `/ready` returns `starting` during initialization, then `ready` with index counts. Routes that need the RAG system return HTTP 503 until the application is ready.
-
-### Search
-
-```http
-POST /api/v1/search
-Content-Type: application/json
-
-{
-  "query": "What does Article 21 of the Constitution guarantee?",
-  "k": 10,
-  "domain": "constitution"
-}
-```
-
-`query` must contain 3 to 2,000 characters. `k` ranges from 1 to 50. `domain` is optional and accepts `constitution`, `statutes`, `judgements`, or `all`.
-
-### Full answer
-
-```http
-POST /api/v1/answer
-Content-Type: application/json
-
-{
-  "query": "When can police arrest a person without a warrant?",
-  "domain": "statutes"
-}
-```
-
-The response includes the original query, detected domain, grounded answer, and the source chunks used to generate it. Answer queries accept 3 to 4,000 characters.
-
-Two prefixes select answer modes:
-
-- `ADVOCATE:` asks for the strongest counter-argument supported by the retrieved context.
-- `SUMMARISE:` asks for a plain-language explanation suitable for a client.
-
-### Streaming answer
-
-```http
-POST /api/v1/answer/stream
-Content-Type: application/json
-
-{
-  "query": "What is the punishment for murder under BNS?"
-}
-```
-
-The endpoint returns `text/event-stream`. Events include `sources`, individual `token` values, a final `done` event containing the complete answer, or an `error` event. A `: ping` SSE comment is sent periodically to keep long-running connections alive.
-
-### Admin statistics
-
-```http
-GET /api/v1/admin/stats
-```
-
-Returns the current index counts and whether the cloud models passed startup checks. This endpoint currently has no authentication layer; place the service behind appropriate access control before exposing it publicly.
-
-## Testing
-
-The HTTP-oriented tests expect a running server whose `/ready` endpoint returns HTTP 200. Start the API in one terminal, then run one of the following in another:
+## Tests and evaluations
 
 ```powershell
-python -m tests.test_suite --router
-python -m tests.test_suite --retrieval-only
-python -m tests.test_suite --category statutes
-python -m tests.test_suite --id S01
-python -m tests.test_suite
+python -m pytest --ignore=tests/test_suite.py
 ```
 
-For a different server URL:
+`tests/test_suite.py` is the old HTTP suite for the v1 setup.
 
-```powershell
-python -m tests.test_suite --base-url http://192.168.1.10:8000
-```
+| Evaluation | Measures |
+|---|---|
+| `eval/retrieval.py` | Retrieval: hit@k, recall, MRR, nDCG over 279 graded questions |
+| `eval/answers.py` | Answers end to end with a given model: citations, key facts, verifier findings, speed |
+| `eval/links.py` | Whether old ↔ new section links reach the answer model |
+| `eval/case_offences.py` | Whether the Case Builder finds the expected offences |
+| `eval/case_compare.py` | The Case Builder's precedent comparisons |
+| `eval/calibrate_gate.py`, `eval/tune.py` | Fitting the gate's thresholds and the search weights (on the dev split) |
 
-The base URL can also be supplied with `PARALEGAL_TEST_URL`. With pytest:
-
-```powershell
-pytest tests/test_suite.py -v
-pytest tests/test_suite.py -v -m "not slow"
-```
-
-The full answer tests call external services and can be slow or rate-limited. The router mode is local and does not initialize cloud models.
-
-## Operational Notes
-
-- Cloud API credentials are required during application startup, even when only checking the health endpoint.
-- Search and answer requests are unavailable until model checks and Qdrant index initialization complete.
-- The Cohere trial tier limits embedding volume; avoid unnecessary `--force` ingestion.
-- CORS is currently configured to allow all origins. Restrict `allow_origins` before production deployment.
-- The API has no authentication or authorization middleware in the current codebase.
-- Answers are designed to stay grounded in retrieved context, but application users must independently verify legal accuracy and currency
+Results go to `eval/results/` and model replies are cached in `data/eval/`; neither is committed.
